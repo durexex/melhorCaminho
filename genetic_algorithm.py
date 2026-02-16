@@ -24,6 +24,35 @@ def generate_random_population(cities_location: List[Tuple[float, float]], popul
     """
     return [random.sample(cities_location, len(cities_location)) for _ in range(population_size)]
 
+def generate__population_using_Nearest_Neighbours(
+    cities_location: List[Tuple[float, float]],
+    population_size: int,
+) -> List[List[Tuple[float, float]]]:
+    """
+    Generate a population using a nearest neighbour heuristic.
+
+    Each route starts from a random city, then repeatedly visits the nearest unvisited city.
+    """
+    if population_size <= 0 or not cities_location:
+        return []
+
+    population = []
+    for _ in range(population_size):
+        unvisited = cities_location.copy()
+        current = random.choice(unvisited)
+        route = [current]
+        unvisited.remove(current)
+
+        while unvisited:
+            next_city = min(unvisited, key=lambda city: calculate_distance(current, city))
+            route.append(next_city)
+            unvisited.remove(next_city)
+            current = next_city
+
+        population.append(route)
+
+    return population
+
 
 def calculate_distance(point1: Tuple[float, float], point2: Tuple[float, float]) -> float:
     """

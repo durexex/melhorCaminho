@@ -2,7 +2,8 @@ import pygame
 from pygame.locals import *
 import random
 import itertools
-from genetic_algorithm import mutate, order_crossover, generate_random_population, calculate_fitness, sort_population, default_problems
+from genetic_algorithm import mutate, order_crossover, generate_random_population, calculate_fitness, sort_population, generate__population_using_Nearest_Neighbours, default_problems
+from demo_tournament import tournament_selection
 from draw_functions import draw_paths, draw_plot, draw_cities
 import sys
 import numpy as np
@@ -18,8 +19,10 @@ FPS = 30
 PLOT_X_OFFSET = 450
 
 if len(sys.argv) > 1:
-    MAX_GENERATION_ALLOWED = int(sys.argv[1])
+    GERAR_CIDADES = int(sys.argv[1]) == 0
+    MAX_GENERATION_ALLOWED = int(sys.argv[2])    
 else:
+    GERAR_CIDADES = True
     MAX_GENERATION_ALLOWED = 1000
 
 # GA
@@ -37,8 +40,25 @@ BLUE = (0, 0, 255)
 
 # Initialize problem
 # Using Random cities generation
-cities_locations = [(random.randint(NODE_RADIUS + PLOT_X_OFFSET, WIDTH - NODE_RADIUS), random.randint(NODE_RADIUS, HEIGHT - NODE_RADIUS))
-                    for _ in range(N_CITIES)]
+if GERAR_CIDADES:
+    cities_locations = [
+        (random.randint(NODE_RADIUS + PLOT_X_OFFSET, WIDTH - NODE_RADIUS), random.randint(NODE_RADIUS, HEIGHT - NODE_RADIUS))
+        for _ in range(N_CITIES)
+    ]
+
+    with open("cities_locations.txt", "w", encoding="utf-8") as cities_file:
+        for x, y in cities_locations:
+            cities_file.write(f"{x},{y}\n")
+else:
+    with open("cities_locations.txt", "r", encoding="utf-8") as cities_file:
+        cities_locations = []
+        for line in cities_file:
+            line = line.strip()
+            if not line:
+                continue
+            x_str, y_str = line.split(",", 1)
+            cities_locations.append((int(x_str), int(y_str)))
+
 
 
 # # Using Deault Problems: 10, 12 or 15
@@ -71,7 +91,8 @@ generation_counter = itertools.count(start=1)  # Start the counter at 1
 
 # Create Initial Population
 # TODO:- use some heuristic like Nearest Neighbour our Convex Hull to initialize
-population = generate_random_population(cities_locations, POPULATION_SIZE)
+population = generate_random_population(cities_locations, int(round(POPULATION_SIZE * 0.9, 0)))
+population = generate__population_using_Nearest_Neighbours(cities_locations, int(round(POPULATION_SIZE * 0.1, 0)))
 best_fitness_values = []
 best_solutions = []
 
@@ -117,7 +138,7 @@ while running:
 
     new_population = [population[0]]  # Keep the best individual: ELITISM
 
-    while len(new_population) < POPULATION_SIZE:
+    while len(new_population) < (POPULATION_SIZE  * 0.5):
 
         # selection
         # simple selection based on first 10 best solutions
@@ -134,8 +155,24 @@ while running:
 
         new_population.append(child1)
 
-    population = new_population
+    while len(new_population) < (POPULATION_SIZE  * 0.5):
 
+        # selection
+        # parent1, parent2 = tournament_selection(population[:10], k=2)
+
+        # tournament selection
+        parent1, _ = tournament_selection(population, calculate_fitness, tournament_size=3, minimize=True)
+        parent2, _ = tournament_selection(population, calculate_fitness, tournament_size=3, minimize=True)
+
+        # child1 = order_crossover(parent1, parent2)
+        child1 = order_crossover(parent1, parent2)
+
+        child1 = mutate(child1, MUTATION_PROBABILITY)
+
+        new_population.append(child1)
+
+    population = new_population
+    
     pygame.display.flip()
     clock.tick(FPS)
 

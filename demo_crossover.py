@@ -16,7 +16,7 @@ def order_crossover(parent1, parent2):
     
     start_index, end_index = 0, 3
 
-    print (start_index, end_index)
+    print(start_index, end_index)
     # Initialize the child with a copy of the substring from parent1
     child = parent1[start_index:end_index]
 
