@@ -1,0 +1,11 @@
+Relatorio da execucao
+Numero de cidades: 20
+Inicio: 2026-02-23 14:48:45
+Fim: 2026-02-23 14:49:54
+Tempo total (s): 68.44
+Melhor fitness: 3816.87
+Melhor solucao: [(1355, 879), (1139, 753), (988, 841), (654, 1019), (720, 722), (773, 664), (912, 540), (1030, 536), (1074, 524), (1353, 309), (1499, 328), (1556, 295), (1537, 584), (1931, 629), (1960, 851), (1860, 869), (1820, 774), (1653, 852), (1459, 763), (1350, 788)]
+Geracao da melhor solucao: 198
+Probabilidade de mutacao: 0.50
+Percentual populacao random: 0.90
+Populacao inicial: convex hull

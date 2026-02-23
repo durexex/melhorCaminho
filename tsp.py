@@ -2,13 +2,16 @@ import pygame
 from pygame.locals import *
 import random
 import itertools
-from genetic_algorithm import mutate, order_crossover, generate_random_population, calculate_fitness, sort_population, generate__population_using_Nearest_Neighbours, default_problems
+from genetic_algorithm import *
 from demo_tournament import tournament_selection
 from draw_functions import draw_paths, draw_plot, draw_cities
+from utils import ReportData, set_report_data, generate_report
 import sys
 import numpy as np
 import pygame
 from benchmark_att48 import *
+from datetime import datetime
+import time
 
 
 # Define constant values
@@ -18,18 +21,54 @@ NODE_RADIUS = 10
 FPS = 30
 PLOT_X_OFFSET = 450
 
-if len(sys.argv) > 1:
-    GERAR_CIDADES = int(sys.argv[1]) == 0
-    MAX_GENERATION_ALLOWED = int(sys.argv[2])    
-else:
-    GERAR_CIDADES = True
-    MAX_GENERATION_ALLOWED = 1000
+# Define criação de cidades
+#   True indica que as cidades serão geradas aleatoriamente
+#   False indica que as cidades virão de arquivo texto pré definido
+#
+#  Este parametro trabalha em conjunto com o parâmetro NUMBER_OF_CITIES, caso as cidades sejam geradas
+#  NUMBER_OF_CITIES indicará a quantidade de cidades que serão geradas
+#  Se definido como False, será necessário ter um arquivo chamado cities_locations.txt onde cada linha
+#  indica uma cidade (1457,614) - sendo a latitude e a longitude
+GERAR_CIDADES = False
 
-# GA
-N_CITIES = 15
+# Total de cidades que serão geradas (Somente opera se GERAR_CIDADES = True)
+NUMBER_OF_CITIES = 20
+
+# Total de gerações que serão testadas
+MAX_GENERATION_ALLOWED = 500
+
+# Indica como seão geradas as populações. Se True 100% será aleatoriamente, se False somente o percentual
+# indicado em RANDOM_POPULATION_PERCENT será gerada aleatoriamente e o restante pelo algorítmo indicado
+# em GENERATE_POLPULATION_USING_NEAREST_NEIGHBOURS ou GENERATE_POLPULATION_USING_GREEDY_APPROACH 
+ONLY_RANDOM_POPULATION=False
+
+# Total de população gerada de forma aleatória. Se ONLY_RANDOM_POPULATION = for False o valor aqui definido 
+# é desprezado e será utilizado o valor 1 (100%)
+# Este parâmetro pode variar de 0 a 1
+RANDOM_POPULATION_PERCENT = 0.9
+if RANDOM_POPULATION_PERCENT < 0:
+    RANDOM_POPULATION_PERCENT = 0
+elif RANDOM_POPULATION_PERCENT > 1:
+    RANDOM_POPULATION_PERCENT = 1
+
+# Estes 2 parâmetros a seguir indicam o método alternativo para geração de população
+# Somente funcionam se ONLY_RANDOM_POPULATION for False
+# A quantidade de população gerada por eles será 1 - RANDOM_POPULATION_PERCENT 
+# Funcionam de forma exclusiva (ou um ou outro). 
+# Se GENERATE_POLPULATION_USING_NEAREST_NEIGHBOURS For True qualquer valor colocado em 
+# GENERATE_POLPULATION_USING_GREEDY_APPROACH será desprezado
+
+GENERATE_POLPULATION_USING_NEAREST_NEIGHBOURS = False
+GENERATE_POLPULATION_USING_GREEDY_APPROACH = False
+GENERATE_POLPULATION_USING_CONVEX_HULL=True
+
+# Tamanho da população - para entendimento População neste caso são as rotas procuradas
 POPULATION_SIZE = 100
-N_GENERATIONS = None
+
+# Probabilidade de gerar mutação 
 MUTATION_PROBABILITY = 0.5
+# Ao fazer a mutação define se irá somente fazer a troca dos segmentos ou invertÊ-los
+JUST_SWAP = True
 
 # Define colors
 WHITE = (255, 255, 255)
@@ -38,12 +77,15 @@ RED = (255, 0, 0)
 BLUE = (0, 0, 255)
 
 
+# 1. Guardar hora de início
+hora_inicio = datetime.now()
+
 # Initialize problem
 # Using Random cities generation
 if GERAR_CIDADES:
     cities_locations = [
         (random.randint(NODE_RADIUS + PLOT_X_OFFSET, WIDTH - NODE_RADIUS), random.randint(NODE_RADIUS, HEIGHT - NODE_RADIUS))
-        for _ in range(N_CITIES)
+        for _ in range(NUMBER_OF_CITIES)
     ]
 
     with open("cities_locations.txt", "w", encoding="utf-8") as cities_file:
@@ -88,14 +130,29 @@ pygame.display.set_caption("TSP Solver using Pygame")
 clock = pygame.time.Clock()
 generation_counter = itertools.count(start=1)  # Start the counter at 1
 
-
 # Create Initial Population
-# TODO:- use some heuristic like Nearest Neighbour our Convex Hull to initialize
-population = generate_random_population(cities_locations, int(round(POPULATION_SIZE * 0.9, 0)))
-population = generate__population_using_Nearest_Neighbours(cities_locations, int(round(POPULATION_SIZE * 0.1, 0)))
+if ONLY_RANDOM_POPULATION:
+    RANDOM_POPULATION_PERCENT = 1
+    
+population = generate_random_population(cities_locations, int(round(POPULATION_SIZE * RANDOM_POPULATION_PERCENT, 0)))
+initial_population_method = "random"
+
+if ONLY_RANDOM_POPULATION == False:
+    if GENERATE_POLPULATION_USING_NEAREST_NEIGHBOURS:
+        population = generate__population_using_Nearest_Neighbours(cities_locations, int(round(POPULATION_SIZE * (1 - RANDOM_POPULATION_PERCENT), 0)))
+        initial_population_method = "nearest_neighbours"
+    elif GENERATE_POLPULATION_USING_GREEDY_APPROACH:
+        population = generate__population_using_greddy_approach(cities_locations, int(round(POPULATION_SIZE * (1 - RANDOM_POPULATION_PERCENT), 0)))
+        initial_population_method = "greedy"
+    elif GENERATE_POLPULATION_USING_CONVEX_HULL:
+        generate__population_using_convex_hull(cities_locations, int(round(POPULATION_SIZE * (1 - RANDOM_POPULATION_PERCENT), 0)))
+        initial_population_method = "convex hull"
+
 best_fitness_values = []
 best_solutions = []
-
+# para logar qual geração acho melhor valor
+choosen_generation = 0
+old_best_solution = 0
 
 # Main game loop
 running = True
@@ -115,17 +172,24 @@ while running:
 
     screen.fill(WHITE)
 
-    population_fitness = [calculate_fitness(
-        individual) for individual in population]
+    population_fitness = [calculate_fitness(individual) for individual in population]
 
-    population, population_fitness = sort_population(
-        population,  population_fitness)
+    population, population_fitness = sort_population(population,  population_fitness)
 
+    
     best_fitness = calculate_fitness(population[0])
     best_solution = population[0]
 
     best_fitness_values.append(best_fitness)
     best_solutions.append(best_solution)
+
+    if old_best_solution == 0:
+        old_best_solution = best_solution
+    
+    if best_solution < old_best_solution:
+        old_best_solution = best_solution
+        choosen_generation = generation
+    
 
     draw_plot(screen, list(range(len(best_fitness_values))),
               best_fitness_values, y_label="Fitness - Distance (pxls)")
@@ -136,7 +200,8 @@ while running:
 
     print(f"Generation {generation}: Best fitness = {round(best_fitness, 2)}")
 
-    new_population = [population[0]]  # Keep the best individual: ELITISM
+    # Keep the best individual: ELITISM
+    new_population = [population[0]]  
 
     while len(new_population) < (POPULATION_SIZE  * 0.5):
 
@@ -151,7 +216,7 @@ while running:
         # child1 = order_crossover(parent1, parent2)
         child1 = order_crossover(parent1, parent2)
 
-        child1 = mutate(child1, MUTATION_PROBABILITY)
+        child1 = mutate(child1, MUTATION_PROBABILITY, JUST_SWAP)
 
         new_population.append(child1)
 
@@ -167,7 +232,7 @@ while running:
         # child1 = order_crossover(parent1, parent2)
         child1 = order_crossover(parent1, parent2)
 
-        child1 = mutate(child1, MUTATION_PROBABILITY)
+        child1 = mutate(child1, MUTATION_PROBABILITY, JUST_SWAP)
 
         new_population.append(child1)
 
@@ -177,8 +242,72 @@ while running:
     clock.tick(FPS)
 
 
-# TODO: save the best individual in a file if it is better than the one saved.
+hora_final = datetime.now()
+report_output_path = f"reports\\{hora_final.strftime('%Y%m%d%H%M%S')}.txt"
+
+if best_fitness_values:
+    best_index, _ = min(enumerate(best_fitness_values), key=lambda x: x[1])
+    best_solution_report = best_solutions[best_index]
+    best_generation_report = best_index + 1
+    best_fitness_report = best_fitness_values[best_index]
+else:
+    best_solution_report = []
+    best_generation_report = 0
+    best_fitness_report = 0.0
+
+set_report_data(ReportData(
+    num_cities=len(cities_locations),
+    start_time=hora_inicio,
+    end_time=hora_final,
+    best_solution=best_solution_report,
+    best_generation=best_generation_report,
+    best_fitness=best_fitness_report,
+    mutation_probability=MUTATION_PROBABILITY,
+    random_population_percent=RANDOM_POPULATION_PERCENT,
+    initial_population_method=initial_population_method,
+    output_path=report_output_path,
+))
+
+print(generate_report())
 
 # exit software
 pygame.quit()
 sys.exit()
+
+
+
+# TODO:
+
+###
+# Restrições de rota
+
+# TSP assimétrico (ATSP): custo A->B diferente de B->A para “sentido único”.
+# Arestas proibidas: algumas conexões não podem existir (vias fechadas).
+# Penalidade por uso: desestimular certas rotas com custo extra.
+# Restrições de tempo
+
+# Time windows: cada cidade tem horário permitido [início, fim].
+# Tempo de serviço: tempo fixo parado em cada cidade.
+# Tempo dependente: tempo de viagem depende do horário (trânsito).
+# Qualidade da solução
+
+# Local search: 2-opt, 3-opt, or-opt pós‑crossover para refinar.
+# Heurística híbrida: inicializar parte da população com greedy/convex hull + random.
+# Evolução
+
+# Mutação adaptativa: aumenta quando a população estagna.
+# Elitismo controlado: preservar top k mas evitar convergência prematura.
+# Diversidade: penalizar rotas muito parecidas.
+# Seleção e crossover
+
+# Crossover especializado: Edge Recombination, PMX, OX2.
+# Seleção por torneio ajustável: tamanho do torneio muda ao longo das gerações.
+# Critérios de parada
+
+# Estagnação: para se não melhora após N gerações.
+# Orçamento de tempo: interrompe por tempo máximo.
+# Se quiser, digo quais mudanças cabem melhor no seu código atual e implemento a primeira. Para direcionar:
+
+# Você quer sentido único (custo A->B ≠ B->A) ou rotas proibidas?
+# Quer time windows rígidas ou apenas penalidade por atraso?
+# O objetivo continua minimizar distância, ou passa a minimizar tempo total?

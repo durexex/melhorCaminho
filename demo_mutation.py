@@ -17,16 +17,10 @@ def mutate(solution, mutation_probability):
         # Select a random index (excluding the last index) for swapping
         index = random.randint(0, len(solution) - 2)
         
-        
-        
         # Swap the cities at the selected index and the next index
         mutated_solution[index], mutated_solution[index + 1] = solution[index + 1], solution[index]
     
-        
-        
     return mutated_solution
-        
-        
     
 # Example usage:
 original_solution =[(99, 100), (2, 50), (1, 71)]

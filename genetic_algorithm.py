@@ -1,7 +1,7 @@
 import random
 import math
 import copy 
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 
 default_problems = {
 5: [(733, 251), (706, 87), (546, 97), (562, 49), (576, 253)],
@@ -49,6 +49,109 @@ def generate__population_using_Nearest_Neighbours(
             unvisited.remove(next_city)
             current = next_city
 
+        population.append(route)
+
+    return population
+
+
+def generate__population_using_greddy_approach(
+    cities_location: List[Tuple[float, float]],
+    population_size: int,
+) -> List[List[Tuple[float, float]]]:
+    """
+    Generate a population using a greedy multi-fragment heuristic.
+
+    This approach builds a tour by repeatedly adding the shortest available edge
+    while avoiding early cycles and keeping each city degree <= 2.
+    """
+    if population_size <= 0 or not cities_location:
+        return []
+
+    n = len(cities_location)
+    if n <= 2:
+        return [random.sample(cities_location, n) for _ in range(population_size)]
+
+    def greedy_multifragment() -> Optional[List[int]]:
+        edges = []
+        for i in range(n):
+            for j in range(i + 1, n):
+                dist = calculate_distance(cities_location[i], cities_location[j])
+                # Small jitter to diversify ties across the population
+                dist += random.random() * 1e-6
+                edges.append((dist, i, j))
+
+        edges.sort(key=lambda x: x[0])
+
+        parent = list(range(n))
+        rank = [0] * n
+        degree = [0] * n
+        chosen_edges = []
+
+        def find(x: int) -> int:
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        def union(a: int, b: int) -> None:
+            ra, rb = find(a), find(b)
+            if ra == rb:
+                return
+            if rank[ra] < rank[rb]:
+                parent[ra] = rb
+            elif rank[ra] > rank[rb]:
+                parent[rb] = ra
+            else:
+                parent[rb] = ra
+                rank[ra] += 1
+
+        for _, i, j in edges:
+            if degree[i] >= 2 or degree[j] >= 2:
+                continue
+
+            fi, fj = find(i), find(j)
+            if fi == fj and len(chosen_edges) < n - 1:
+                continue
+
+            chosen_edges.append((i, j))
+            degree[i] += 1
+            degree[j] += 1
+
+            if fi != fj:
+                union(fi, fj)
+
+            if len(chosen_edges) == n:
+                break
+
+        if len(chosen_edges) != n:
+            return None
+
+        adjacency = [[] for _ in range(n)]
+        for i, j in chosen_edges:
+            adjacency[i].append(j)
+            adjacency[j].append(i)
+
+        if any(len(neigh) != 2 for neigh in adjacency):
+            return None
+
+        start = random.randrange(n)
+        route = [start]
+        prev = -1
+        current = start
+        for _ in range(n - 1):
+            next_node = adjacency[current][0] if adjacency[current][0] != prev else adjacency[current][1]
+            route.append(next_node)
+            prev, current = current, next_node
+
+        return route
+
+    population = []
+    for _ in range(population_size):
+        route_indices = greedy_multifragment()
+        if route_indices is None:
+            route = random.sample(cities_location, n)
+        else:
+            route = [cities_location[i] for i in route_indices]
         population.append(route)
 
     return population
@@ -141,10 +244,8 @@ def order_crossover(parent1: List[Tuple[float, float]], parent2: List[Tuple[floa
 # population = [(random.randint(0, 100), random.randint(0, 100))
 #           for _ in range(3)]
 
-
-
-# TODO: implement a mutation_intensity and invert pieces of code instead of just swamping two. 
-def mutate(solution:  List[Tuple[float, float]], mutation_probability: float) ->  List[Tuple[float, float]]:
+def mutate(solution:  List[Tuple[float, float]], mutation_probability: float, 
+           just_swap) ->  List[Tuple[float, float]]:
     """
     Mutate a solution by inverting a segment of the sequence with a given mutation probability.
 
@@ -164,11 +265,15 @@ def mutate(solution:  List[Tuple[float, float]], mutation_probability: float) ->
         if len(solution) < 2:
             return solution
     
+        if just_swap:
         # Select a random index (excluding the last index) for swapping
-        index = random.randint(0, len(solution) - 2)
-        
-        # Swap the cities at the selected index and the next index
-        mutated_solution[index], mutated_solution[index + 1] = solution[index + 1], solution[index]   
+            index = random.randint(0, len(solution) - 2)
+            # Swap the cities at the selected index and the next index
+            mutated_solution[index], mutated_solution[index + 1] = solution[index + 1], solution[index]           
+        else:
+            i, j = sorted(random.sample(range(len(mutated_solution)), 2))
+            # Inverte o segmento entre i e j
+            mutated_solution[i:j+1] = reversed(mutated_solution[i:j+1])
         
     return mutated_solution
 
@@ -247,7 +352,7 @@ if __name__ == '__main__':
             child1 = order_crossover(parent1, parent2)
             
             ## MUTATION
-            child1 = mutate(child1, MUTATION_PROBABILITY)
+            child1 = mutate(child1, MUTATION_PROBABILITY, False)
             
             new_population.append(child1)
             
@@ -255,3 +360,87 @@ if __name__ == '__main__':
         print('generation: ', generation)
         population = new_population
     
+def generate__population_using_convex_hull(
+    cities_location: List[Tuple[float, float]],
+    population_size: int,
+) -> List[List[Tuple[float, float]]]:
+    """
+    Generate a population using a convex hull + insertion heuristic.
+
+    Steps:
+    1) Build the convex hull of the cities.
+    2) Insert remaining cities into the tour by cheapest insertion.
+    3) Add small randomization to diversify the population.
+    """
+    if population_size <= 0 or not cities_location:
+        return []
+
+    n = len(cities_location)
+    if n <= 2:
+        return [random.sample(cities_location, n) for _ in range(population_size)]
+
+    def cross(o: Tuple[float, float], a: Tuple[float, float], b: Tuple[float, float]) -> float:
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+    def convex_hull(points: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
+        points_sorted = sorted(set(points))
+        if len(points_sorted) <= 1:
+            return points_sorted
+
+        lower: List[Tuple[float, float]] = []
+        for p in points_sorted:
+            while len(lower) >= 2 and cross(lower[-2], lower[-1], p) <= 0:
+                lower.pop()
+            lower.append(p)
+
+        upper: List[Tuple[float, float]] = []
+        for p in reversed(points_sorted):
+            while len(upper) >= 2 and cross(upper[-2], upper[-1], p) <= 0:
+                upper.pop()
+            upper.append(p)
+
+        return lower[:-1] + upper[:-1]
+
+    def rotate_route(route: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
+        if not route:
+            return route
+        k = random.randrange(len(route))
+        return route[k:] + route[:k]
+
+    def insert_cheapest(route: List[Tuple[float, float]], city: Tuple[float, float]) -> List[Tuple[float, float]]:
+        if len(route) < 2:
+            return route + [city]
+
+        best_index = 0
+        best_delta = float("inf")
+        m = len(route)
+        for i in range(m):
+            a = route[i]
+            b = route[(i + 1) % m]
+            delta = calculate_distance(a, city) + calculate_distance(city, b) - calculate_distance(a, b)
+            delta += random.random() * 1e-6
+            if delta < best_delta:
+                best_delta = delta
+                best_index = i + 1
+
+        return route[:best_index] + [city] + route[best_index:]
+
+    hull = convex_hull(cities_location)
+    population = []
+
+    for _ in range(population_size):
+        route = hull[:]
+
+        if random.random() < 0.5:
+            route.reverse()
+        route = rotate_route(route)
+
+        remaining = [c for c in cities_location if c not in route]
+        random.shuffle(remaining)
+
+        for city in remaining:
+            route = insert_cheapest(route, city)
+
+        population.append(route)
+
+    return population
