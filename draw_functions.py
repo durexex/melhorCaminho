@@ -1,87 +1,77 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 
+from __future__ import annotations
+
+from typing import List, Tuple, Optional
 import matplotlib.pyplot as plt
-from matplotlib.backends.backend_agg import FigureCanvasAgg
-import matplotlib
-import pygame
-from typing import List, Tuple
-
-matplotlib.use("Agg")
 
 
-def draw_plot(screen: pygame.Surface, x: list, y: list, x_label: str = 'Generation', y_label: str = 'Fitness') -> None:
-    """
-    Draw a plot on a Pygame screen using Matplotlib.
+def _normalize_color(rgb: Tuple[int, int, int]) -> Tuple[float, float, float]:
+    return (rgb[0] / 255, rgb[1] / 255, rgb[2] / 255)
 
-    Parameters:
-    - screen (pygame.Surface): The Pygame surface to draw the plot on.
-    - x (list): The x-axis values.
-    - y (list): The y-axis values.
-    - x_label (str): Label for the x-axis (default is 'Generation').
-    - y_label (str): Label for the y-axis (default is 'Fitness').
-    """
+
+def _close_path(path: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
+    if not path:
+        return []
+    if path[0] == path[-1]:
+        return path
+    return [*path, path[0]]
+
+
+def draw_plot(x: list, y: list, x_label: str = "Generation", y_label: str = "Fitness"):
     fig, ax = plt.subplots(figsize=(4, 4), dpi=100)
-    ax.plot(x, y)
+    ax.plot(x, y, color=_normalize_color((0, 0, 255)))
     ax.set_ylabel(y_label)
     ax.set_xlabel(x_label)
-    plt.tight_layout()
-
-    canvas = FigureCanvasAgg(fig)
-    canvas.draw()
-    renderer = canvas.get_renderer()
-    raw_data = renderer.tostring_argb()
-
-    size = canvas.get_width_height()
-    surf = pygame.image.fromstring(raw_data, size, "ARGB")
-    screen.blit(surf, (0, 0))
-    
-def draw_cities(screen: pygame.Surface, cities_locations: List[Tuple[int, int]], rgb_color: Tuple[int, int, int], node_radius: int) -> None:
-    """
-    Draws circles representing cities on the given Pygame screen.
-
-    Parameters:
-    - screen (pygame.Surface): The Pygame surface on which to draw the cities.
-    - cities_locations (List[Tuple[int, int]]): List of (x, y) coordinates representing the locations of cities.
-    - rgb_color (Tuple[int, int, int]): Tuple of three integers (R, G, B) representing the color of the city circles.
-    - node_radius (int): The radius of the city circles.
-
-    Returns:
-    None
-    """
-    for city_location in cities_locations:
-        pygame.draw.circle(screen, rgb_color, city_location, node_radius)
+    ax.grid(True, alpha=0.2)
+    fig.tight_layout()
+    return fig
 
 
-
-def draw_paths(screen: pygame.Surface, path: List[Tuple[int, int]], rgb_color: Tuple[int, int, int], width: int = 1):
-    """
-    Draw a path on a Pygame screen.
-
-    Parameters:
-    - screen (pygame.Surface): The Pygame surface to draw the path on.
-    - path (List[Tuple[int, int]]): List of tuples representing the coordinates of the path.
-    - rgb_color (Tuple[int, int, int]): RGB values for the color of the path.
-    - width (int): Width of the path lines (default is 1).
-    """
-    pygame.draw.lines(screen, rgb_color, True, path, width=width)
+def draw_cities(ax, cities_locations: List[Tuple[int, int]], rgb_color: Tuple[int, int, int], node_radius: int) -> None:
+    if not cities_locations:
+        return
+    xs, ys = zip(*cities_locations)
+    ax.scatter(xs, ys, s=node_radius * node_radius, c=[_normalize_color(rgb_color)], zorder=3)
 
 
-def draw_text(screen: pygame.Surface, text: str, color: pygame.Color) -> None:
-    """
-    Draw text on a Pygame screen.
+def draw_paths(ax, path: List[Tuple[int, int]], rgb_color: Tuple[int, int, int], width: int = 1) -> None:
+    if not path:
+        return
+    closed = _close_path(list(path))
+    xs, ys = zip(*closed)
+    ax.plot(xs, ys, color=_normalize_color(rgb_color), linewidth=width, zorder=2)
 
-    Parameters:
-    - screen (pygame.Surface): The Pygame surface to draw the text on.
-    - text (str): The text to be displayed.
-    - color (pygame.Color): The color of the text.
-    """
-    pygame.font.init()  # You have to call this at the start
 
-    font_size = 15
-    my_font = pygame.font.SysFont('Arial', font_size)
-    text_surface = my_font.render(text, False, color)
-    
-    cities_locations = []  # Assuming you have this list defined somewhere
-    text_position = (np.average(np.array(cities_locations)[:, 0]), HEIGHT - 1.5 * font_size)
-    
-    screen.blit(text_surface, text_position)
+def build_solution_figure(
+    cities_locations: List[Tuple[int, int]],
+    best_path: List[Tuple[int, int]],
+    candidate_path: Optional[List[Tuple[int, int]]] = None,
+    node_radius: int = 10,
+    city_color: Tuple[int, int, int] = (255, 0, 0),
+    best_color: Tuple[int, int, int] = (0, 0, 255),
+    candidate_color: Tuple[int, int, int] = (128, 128, 128),
+    width: Optional[int] = None,
+    height: Optional[int] = None,
+    x_offset: Optional[int] = None,
+    invert_y: bool = True,
+):
+    fig, ax = plt.subplots(figsize=(7, 7), dpi=100)
+    draw_cities(ax, cities_locations, city_color, node_radius)
+    if candidate_path:
+        draw_paths(ax, candidate_path, candidate_color, width=1)
+    if best_path:
+        draw_paths(ax, best_path, best_color, width=2)
+
+    if width is not None and height is not None:
+        x_min = x_offset if x_offset is not None else 0
+        ax.set_xlim(x_min, width)
+        ax.set_ylim(0, height)
+
+    if invert_y:
+        ax.invert_yaxis()
+
+    ax.set_aspect("equal", adjustable="datalim")
+    ax.axis("off")
+    fig.tight_layout()
+    return fig
