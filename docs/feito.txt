@@ -1,0 +1,51 @@
+
+# TODO:
+
+###
+# Restrições de rota
+
+###### Arestas proibidas: algumas conexões não podem existir (vias fechadas).
+# Penalidade por uso: desestimular certas rotas com custo extra.
+# Restrições de tempo
+
+# Time windows: cada cidade tem horário permitido [início, fim].
+# Tempo de serviço: tempo fixo parado em cada cidade.
+# Tempo dependente: tempo de viagem depende do horário (trânsito).
+# Qualidade da solução
+
+# Local search: 2-opt, 3-opt, or-opt pós‑crossover para refinar.
+# Heurística híbrida: inicializar parte da população com greedy/convex hull + random.
+# Evolução
+
+# Mutação adaptativa: aumenta quando a população estagna.
+# Elitismo controlado: preservar top k mas evitar convergência prematura.
+# Diversidade: penalizar rotas muito parecidas.
+# Seleção e crossover
+
+##### Crossover especializado: Edge Recombination, PMX, OX2.
+# Seleção por torneio ajustável: tamanho do torneio muda ao longo das gerações.
+# Critérios de parada
+
+##### Estagnação: para se não melhora após N gerações.
+# Orçamento de tempo: interrompe por tempo máximo.
+# Se quiser, digo quais mudanças cabem melhor no seu código atual e implemento a primeira. Para direcionar:
+
+# Você quer sentido único (custo A->B ≠ B->A) ou rotas proibidas?
+# Quer time windows rígidas ou apenas penalidade por atraso?
+# O objetivo continua minimizar distância, ou passa a minimizar tempo total?
+
+28/02/2026
+
+Implementei ATSP com custos direcionais.
+
+O que mudou
+
+genetic_algorithm.py: adicionei suporte a matriz de custos assimétrica via set_asymmetric_costs(...) e calculate_fitness(...) agora usa essa matriz quando configurada.
+tsp.py: gera uma matriz de custos direcionais e ativa o ATSP por padrão.
+Onde ajustar
+
+tsp.py: ATSP_ENABLED, ASYMMETRY_FACTOR, ASYMMETRY_SEED
+ATSP_ENABLED = True ativa o modo assimétrico.
+ASYMMETRY_FACTOR controla o quanto A→B pode divergir de B→A.
+ASYMMETRY_SEED fixa o resultado para repetibilidade (mude ou use None).
+Se quiser, posso adicionar um switch no Streamlit para ligar/desligar ATSP em tempo real.

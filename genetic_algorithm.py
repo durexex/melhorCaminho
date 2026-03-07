@@ -1,14 +1,44 @@
-import random
+﻿import random
 import math
 import copy 
 from typing import List, Tuple, Optional
 
-default_problems = {
-5: [(733, 251), (706, 87), (546, 97), (562, 49), (576, 253)],
-10:[(470, 169), (602, 202), (754, 239), (476, 233), (468, 301), (522, 29), (597, 171), (487, 325), (746, 232), (558, 136)],
-12:[(728, 67), (560, 160), (602, 312), (712, 148), (535, 340), (720, 354), (568, 300), (629, 260), (539, 46), (634, 343), (491, 135), (768, 161)],
-15:[(512, 317), (741, 72), (552, 50), (772, 346), (637, 12), (589, 131), (732, 165), (605, 15), (730, 38), (576, 216), (589, 381), (711, 387), (563, 228), (494, 22), (787, 288)]
-}
+
+_ASYMMETRIC_COSTS: Optional[List[List[float]]] = None
+_CITY_INDEX: Optional[dict[Tuple[float, float], int]] = None
+
+
+def set_asymmetric_costs(cities_location: List[Tuple[float, float]], costs: List[List[float]]) -> None:
+    """
+    Configure asymmetric costs for ATSP.
+
+    Parameters:
+    - cities_location (List[Tuple[float, float]]): List of city coordinates.
+    - costs (List[List[float]]): Square matrix where costs[i][j] is the cost from city i to j.
+    """
+    n = len(cities_location)
+    if n != len(costs) or any(len(row) != n for row in costs):
+        raise ValueError("Asymmetric cost matrix must be square and match number of cities.")
+
+    global _ASYMMETRIC_COSTS, _CITY_INDEX
+    _ASYMMETRIC_COSTS = costs
+    _CITY_INDEX = {city: i for i, city in enumerate(cities_location)}
+
+
+def clear_asymmetric_costs() -> None:
+    """Disable asymmetric costs and revert to Euclidean distance."""
+    global _ASYMMETRIC_COSTS, _CITY_INDEX
+    _ASYMMETRIC_COSTS = None
+    _CITY_INDEX = None
+
+
+#TODO: Apagar se não mais usado
+# default_problems = {
+# 5: [(733, 251), (706, 87), (546, 97), (562, 49), (576, 253)],
+# 10:[(470, 169), (602, 202), (754, 239), (476, 233), (468, 301), (522, 29), (597, 171), (487, 325), (746, 232), (558, 136)],
+# 12:[(728, 67), (560, 160), (602, 312), (712, 148), (535, 340), (720, 354), (568, 300), (629, 260), (539, 46), (634, 343), (491, 135), (768, 161)],
+# 15:[(512, 317), (741, 72), (552, 50), (772, 346), (637, 12), (589, 131), (732, 165), (605, 15), (730, 38), (576, 216), (589, 381), (711, 387), (563, 228), (494, 22), (787, 288)]
+# }
 
 def generate_random_population(cities_location: List[Tuple[float, float]], population_size: int) -> List[List[Tuple[float, float]]]:
     """
@@ -173,17 +203,36 @@ def calculate_distance(point1: Tuple[float, float], point2: Tuple[float, float])
 
 def calculate_fitness(path: List[Tuple[float, float]]) -> float:
     """
-    Calculate the fitness of a given path based on the total Euclidean distance.
+    Calculate the fitness of a given path.
+
+    If asymmetric costs are configured (ATSP), the directional cost matrix is used.
+    Otherwise, the total Euclidean distance of the path is returned.
 
     Parameters:
     - path (List[Tuple[float, float]]): A list of tuples representing the path,
       where each tuple contains the coordinates of a point.
 
     Returns:
-    float: The total Euclidean distance of the path.
+    float: The total distance/cost of the path.
     """
     distance = 0
     n = len(path)
+    if n == 0:
+        return 0
+
+    if _ASYMMETRIC_COSTS is not None and _CITY_INDEX is not None:
+        costs = _ASYMMETRIC_COSTS
+        index = _CITY_INDEX
+        try:
+            indices = [index[city] for city in path]
+        except KeyError:
+            indices = None
+
+        if indices is not None:
+            for i in range(n):
+                distance += costs[indices[i]][indices[(i + 1) % n]]
+            return distance
+
     for i in range(n):
         distance += calculate_distance(path[i], path[(i + 1) % n])
 

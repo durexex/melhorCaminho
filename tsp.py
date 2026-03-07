@@ -19,6 +19,52 @@ NODE_RADIUS = 10
 PLOT_X_OFFSET = 450
 RENDER_EVERY = 5
 
+ATSP_ENABLED = True
+ASYMMETRY_FACTOR = 0.3
+ASYMMETRY_SEED = 42
+ASYMMETRIC_COSTS_FILE = "cities_asynmetric_cost_matrix.txt"
+CITIES_LOCATION_FILE = "cities_locations.txt"
+
+
+def build_asymmetric_cost_matrix(cities, asymmetry_factor=0.3, seed=None):
+    rng = random.Random(seed) if seed is not None else random
+    n = len(cities)
+    costs = [[0.0] * n for _ in range(n)]
+    for i in range(n):
+        for j in range(n):
+            if i == j:
+                continue
+            base = calculate_distance(cities[i], cities[j])
+            multiplier = 1.0 + asymmetry_factor * (rng.random() * 2 - 1)
+            if multiplier < 0.1:
+                multiplier = 0.1
+            costs[i][j] = base * multiplier
+
+    with open(ASYMMETRIC_COSTS_FILE, "w", encoding="utf-8") as costs_file:
+        for row in costs:
+            costs_file.write(",".join(f"{value}" for value in row) + "\n")
+
+    return costs
+
+
+def load_asymmetric_cost_matrix(path, expected_size):
+    try:
+        with open(path, "r", encoding="utf-8") as costs_file:
+            matrix = []
+            for line in costs_file:
+                line = line.strip()
+                if not line:
+                    continue
+                row = [float(value) for value in line.split(",") if value]
+                matrix.append(row)
+        if not matrix:
+            return None
+        if len(matrix) != expected_size or any(len(row) != expected_size for row in matrix):
+            return None
+        return matrix
+    except FileNotFoundError:
+        return None
+
 # Define criacao de cidades
 #   True indica que as cidades serao geradas aleatoriamente
 #   False indica que as cidades virao de arquivo texto pre definido
@@ -33,7 +79,7 @@ GERAR_CIDADES = False
 NUMBER_OF_CITIES = 20
 
 # Total de geracoes que serao testadas
-MAX_GENERATION_ALLOWED = 150
+MAX_GENERATION_ALLOWED = 50
 
 # Indica como serao geradas as populacoes. Se True 100% sera aleatoriamente, se False somente o percentual
 # indicado em RANDOM_POPULATION_PERCENT sera gerada aleatoriamente e o restante pelo algoritmo indicado
@@ -86,11 +132,24 @@ if GERAR_CIDADES:
         for _ in range(NUMBER_OF_CITIES)
     ]
 
-    with open("cities_locations.txt", "w", encoding="utf-8") as cities_file:
+    with open(CITIES_LOCATION_FILE, "w", encoding="utf-8") as cities_file:
         for x, y in cities_locations:
             cities_file.write(f"{x},{y}\n")
+
+    if ATSP_ENABLED:
+        asymmetric_costs = load_asymmetric_cost_matrix(
+            ASYMMETRIC_COSTS_FILE,
+            expected_size=len(cities_locations),
+        )
+        if asymmetric_costs is None:
+            asymmetric_costs = build_asymmetric_cost_matrix(
+                cities_locations,
+                asymmetry_factor=ASYMMETRY_FACTOR,
+                seed=ASYMMETRY_SEED,
+            )
+        set_asymmetric_costs(cities_locations, asymmetric_costs)
 else:
-    with open("cities_locations.txt", "r", encoding="utf-8") as cities_file:
+    with open(CITIES_LOCATION_FILE, "r", encoding="utf-8") as cities_file:
         cities_locations = []
         for line in cities_file:
             line = line.strip()
@@ -98,27 +157,19 @@ else:
                 continue
             x_str, y_str = line.split(",", 1)
             cities_locations.append((int(x_str), int(y_str)))
-
-
-
-# # Using Deault Problems: 10, 12 or 15
-# WIDTH, HEIGHT = 800, 400
-# cities_locations = default_problems[15]
-
-
-# Using att48 benchmark
-# WIDTH, HEIGHT = 1500, 800
-# att_cities_locations = np.array(att_48_cities_locations)
-# max_x = max(point[0] for point in att_cities_locations)
-# max_y = max(point[1] for point in att_cities_locations)
-# scale_x = (WIDTH - PLOT_X_OFFSET - NODE_RADIUS) / max_x
-# scale_y = HEIGHT / max_y
-# cities_locations = [(int(point[0] * scale_x + PLOT_X_OFFSET),
-#                      int(point[1] * scale_y)) for point in att_cities_locations]
-# target_solution = [cities_locations[i - 1] for i in att_48_cities_order]
-# fitness_target_solution = calculate_fitness(target_solution)
-# print(f"Best Solution: {fitness_target_solution}")
-# ----- Using att48 benchmark
+    
+    if ATSP_ENABLED:
+        asymmetric_costs = load_asymmetric_cost_matrix(
+            ASYMMETRIC_COSTS_FILE,
+            expected_size=len(cities_locations),
+        )
+        if asymmetric_costs is None:
+            asymmetric_costs = build_asymmetric_cost_matrix(
+                cities_locations,
+                asymmetry_factor=ASYMMETRY_FACTOR,
+                seed=ASYMMETRY_SEED,
+            )
+        set_asymmetric_costs(cities_locations, asymmetric_costs)
 
 
 # Create Initial Population
