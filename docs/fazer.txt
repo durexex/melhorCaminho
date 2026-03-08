@@ -4,9 +4,6 @@
 ###
 # Restrições de rota
 
-###### TSP assimétrico (ATSP): custo A->B diferente de B->A para “sentido único”.
-###### Arestas proibidas: algumas conexões não podem existir (vias fechadas).
-
 # Penalidade por uso: desestimular certas rotas com custo extra.
 
 # Restrições de tempo
@@ -19,7 +16,7 @@
 # Heurística híbrida: inicializar parte da população com greedy/convex hull + random.
 
 # Evolução
-# Mutação adaptativa: aumenta quando a população estagna.
+
 # Elitismo controlado: preservar top k mas evitar convergência prematura.
 # Diversidade: penalizar rotas muito parecidas.
 
@@ -33,5 +30,5 @@
 # Se quiser, digo quais mudanças cabem melhor no seu código atual e implemento a primeira. Para direcionar:
 
 # Você quer sentido único (custo A->B ≠ B->A) ou rotas proibidas?
-# Quer time windows rígidas ou apenas penalidade por atraso?
+
 # O objetivo continua minimizar distância, ou passa a minimizar tempo total?

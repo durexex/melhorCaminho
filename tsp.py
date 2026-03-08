@@ -1,4 +1,5 @@
 ﻿import random
+import os
 from genetic_algorithm import *
 from demo_tournament import tournament_selection
 from draw_functions import draw_plot, build_solution_figure
@@ -79,8 +80,7 @@ GERAR_CIDADES = False
 NUMBER_OF_CITIES = 20
 
 # Total de geracoes que serao testadas
-MAX_GENERATION_ALLOWED = 50
-
+MAX_GENERATION_ALLOWED = 5000
 # Indica como serao geradas as populacoes. Se True 100% sera aleatoriamente, se False somente o percentual
 # indicado em RANDOM_POPULATION_PERCENT sera gerada aleatoriamente e o restante pelo algoritmo indicado
 # em GENERATE_POLPULATION_USING_NEAREST_NEIGHBOURS ou GENERATE_POLPULATION_USING_GREEDY_APPROACH
@@ -111,6 +111,17 @@ POPULATION_SIZE = 100
 
 # Probabilidade de gerar mutacao
 MUTATION_PROBABILITY = 0.5
+
+# Controla se deve aumentar a probabilidade de mutação em caso de estagnação
+INCREASE_MUTATION_PROBABILITY_IF_STAGNATIO = True
+# Se ficar estagnado por x gerações ele aumenta a probabilidade de mutação 
+STAGNATION_GENERATIONS = 50
+# MUTATION_PROBABILITY_MAX indica o máxiko que pode ser aplicado de probabilidade
+# de mutação
+MUTATION_PROBABILITY_MAX = 0.9
+# MUTATION_PROBABILITY_STEP indica quantoa umenta de cada vez 
+MUTATION_PROBABILITY_STEP = 0.05
+
 # Ao fazer a mutacao define se ira somente fazer a troca dos segmentos ou inverte-los
 JUST_SWAP = True
 
@@ -192,6 +203,10 @@ if ONLY_RANDOM_POPULATION == False:
 
 best_fitness_values = []
 best_solutions = []
+
+current_mutation_probability = MUTATION_PROBABILITY
+best_fitness_so_far = None
+stagnation_count = 0
 # para logar qual geracao acho melhor valor
 choosen_generation = 0
 old_best_solution = 0
@@ -201,6 +216,14 @@ plot_col, map_col = st.columns([1, 2])
 fitness_placeholder = plot_col.empty()
 map_placeholder = map_col.empty()
 progress = st.progress(0)
+if ATSP_ENABLED and os.path.exists(ASYMMETRIC_COSTS_FILE):
+    heatmap_expander = map_col.expander("Matriz de assimetria (heatmap)", expanded=False)
+    with heatmap_expander:
+        fig, ax = plt.subplots(figsize=(6, 6))
+        im = ax.imshow(asymmetric_costs, cmap="viridis")
+        fig.colorbar(im, ax=ax)
+        st.pyplot(fig, width="stretch")
+        plt.close(fig)
 
 
 # Main loop
@@ -213,6 +236,20 @@ for generation in range(1, MAX_GENERATION_ALLOWED + 1):
 
     best_fitness_values.append(best_fitness)
     best_solutions.append(best_solution)
+
+    if best_fitness_so_far is None or best_fitness < best_fitness_so_far:
+        best_fitness_so_far = best_fitness
+        stagnation_count = 0
+        current_mutation_probability = MUTATION_PROBABILITY
+    else:
+        if INCREASE_MUTATION_PROBABILITY_IF_STAGNATIO:
+            stagnation_count += 1
+            if stagnation_count >= STAGNATION_GENERATIONS:
+                current_mutation_probability = min(
+                    MUTATION_PROBABILITY_MAX,
+                    current_mutation_probability + MUTATION_PROBABILITY_STEP,
+                )
+                stagnation_count = 0
 
     if old_best_solution == 0:
         old_best_solution = best_solution
@@ -230,7 +267,7 @@ for generation in range(1, MAX_GENERATION_ALLOWED + 1):
         parent1, parent2 = random.choices(population, weights=probability, k=2)
 
         child1 = order_crossover(parent1, parent2)
-        child1 = mutate(child1, MUTATION_PROBABILITY, JUST_SWAP)
+        child1 = mutate(child1, current_mutation_probability, JUST_SWAP)
 
         new_population.append(child1)
 
@@ -240,7 +277,7 @@ for generation in range(1, MAX_GENERATION_ALLOWED + 1):
         parent2, _ = tournament_selection(population, calculate_fitness, tournament_size=3, minimize=True)
 
         child1 = order_crossover(parent1, parent2)
-        child1 = mutate(child1, MUTATION_PROBABILITY, JUST_SWAP)
+        child1 = mutate(child1, current_mutation_probability, JUST_SWAP)
 
         new_population.append(child1)
 
@@ -291,7 +328,7 @@ set_report_data(ReportData(
     best_solution=best_solution_report,
     best_generation=best_generation_report,
     best_fitness=best_fitness_report,
-    mutation_probability=MUTATION_PROBABILITY,
+    mutation_probability=current_mutation_probability,
     random_population_percent=RANDOM_POPULATION_PERCENT,
     initial_population_method=initial_population_method,
     output_path=report_output_path,
