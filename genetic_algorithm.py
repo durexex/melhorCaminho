@@ -304,7 +304,13 @@ def mutate(solution:  List[Tuple[float, float]], mutation_probability: float,
 
     Returns:
     List[int]: The mutated solution sequence.
+   
+    # Aplica mutação na rota com probabilidade mutation_probability:
+    # se just_swap=True, troca duas cidades adjacentes aleatórias;
+    # caso contrário, inverte um segmento aleatório da rota.
+    # Retorna a rota (mutada ou original) sem alterar a entrada.
     """
+
     mutated_solution = copy.deepcopy(solution)
 
     # Check if mutation should occur    

@@ -135,8 +135,9 @@ BLUE = (0, 0, 255)
 # 1. Guardar hora de inicio
 hora_inicio = datetime.now()
 
-# Initialize problem
-# Using Random cities generation
+# Se for gerar cidades ele verifica a quantidade a ser gerada em NUMBER_OF_CITIES e ao final guarda um 
+# arquivo texto definido em CITIES_LOCATION_FILE, na sequencia verifica se deve usar matriz de assimatria 
+# em ATSP_ENABLED e gera a matriz e também guarda num arquivo texto definido em  ASYMMETRIC_COSTS_FILE
 if GERAR_CIDADES:
     cities_locations = [
         (random.randint(NODE_RADIUS + PLOT_X_OFFSET, WIDTH - NODE_RADIUS), random.randint(NODE_RADIUS, HEIGHT - NODE_RADIUS))
@@ -160,6 +161,7 @@ if GERAR_CIDADES:
             )
         set_asymmetric_costs(cities_locations, asymmetric_costs)
 else:
+    # aqui ele irá ler os 2 arquivos CITIES_LOCATION_FILE e ASYMMETRIC_COSTS_FILE.
     with open(CITIES_LOCATION_FILE, "r", encoding="utf-8") as cities_file:
         cities_locations = []
         for line in cities_file:
@@ -183,7 +185,8 @@ else:
         set_asymmetric_costs(cities_locations, asymmetric_costs)
 
 
-# Create Initial Population
+# Criação da população inicial, pode ser totalmente randomica ou um pouco randomico e o restante para chegar 
+# em 100% pode ser: NEAREST_NEIGHBOURS, GREEDY_APPROACH ou CONVEX_HULL 
 if ONLY_RANDOM_POPULATION:
     RANDOM_POPULATION_PERCENT = 1
 
@@ -224,7 +227,6 @@ if ATSP_ENABLED and os.path.exists(ASYMMETRIC_COSTS_FILE):
         fig.colorbar(im, ax=ax)
         st.pyplot(fig, width="stretch")
         plt.close(fig)
-
 
 # Main loop
 for generation in range(1, MAX_GENERATION_ALLOWED + 1):
