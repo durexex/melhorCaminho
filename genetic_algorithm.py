@@ -6,6 +6,9 @@ from typing import List, Tuple, Optional
 
 _ASYMMETRIC_COSTS: Optional[List[List[float]]] = None
 _CITY_INDEX: Optional[dict[Tuple[float, float], int]] = None
+_CAR_AUTONOMY: Optional[float] = None
+_REFERENCE_CITY: Optional[Tuple[float, float]] = None
+_INVALID_ROUTE_PENALTY = 1e12
 
 
 def set_asymmetric_costs(cities_location: List[Tuple[float, float]], costs: List[List[float]]) -> None:
@@ -32,13 +35,97 @@ def clear_asymmetric_costs() -> None:
     _CITY_INDEX = None
 
 
-#TODO: Apagar se não mais usado
-# default_problems = {
-# 5: [(733, 251), (706, 87), (546, 97), (562, 49), (576, 253)],
-# 10:[(470, 169), (602, 202), (754, 239), (476, 233), (468, 301), (522, 29), (597, 171), (487, 325), (746, 232), (558, 136)],
-# 12:[(728, 67), (560, 160), (602, 312), (712, 148), (535, 340), (720, 354), (568, 300), (629, 260), (539, 46), (634, 343), (491, 135), (768, 161)],
-# 15:[(512, 317), (741, 72), (552, 50), (772, 346), (637, 12), (589, 131), (732, 165), (605, 15), (730, 38), (576, 216), (589, 381), (711, 387), (563, 228), (494, 22), (787, 288)]
-# }
+def set_car_autonomy(autonomy: Optional[float], reference_city: Optional[Tuple[float, float]] = None) -> None:
+    """
+    Configure car autonomy behavior.
+
+    Parameters:
+    - autonomy (Optional[float]): Max distance the car can travel before refueling.
+      Use None to disable autonomy constraints.
+    - reference_city (Optional[Tuple[float, float]]): Fixed reference city to refuel.
+      If None, the first city of each route is used as reference.
+    """
+    global _CAR_AUTONOMY, _REFERENCE_CITY
+    _CAR_AUTONOMY = autonomy
+    _REFERENCE_CITY = reference_city
+
+
+def clear_car_autonomy() -> None:
+    """Disable autonomy constraints."""
+    global _CAR_AUTONOMY, _REFERENCE_CITY
+    _CAR_AUTONOMY = None
+    _REFERENCE_CITY = None
+
+
+def _cost_between(point1: Tuple[float, float], point2: Tuple[float, float]) -> float:
+    if _ASYMMETRIC_COSTS is not None and _CITY_INDEX is not None:
+        try:
+            return _ASYMMETRIC_COSTS[_CITY_INDEX[point1]][_CITY_INDEX[point2]]
+        except KeyError:
+            return calculate_distance(point1, point2)
+    return calculate_distance(point1, point2)
+
+
+def _rotate_to_reference(path: List[Tuple[float, float]], reference_city: Tuple[float, float]) -> Optional[List[Tuple[float, float]]]:
+    if not path:
+        return []
+    try:
+        idx = path.index(reference_city)
+    except ValueError:
+        return None
+    if idx == 0:
+        return path
+    return path[idx:] + path[:idx]
+
+
+def _route_cost_with_autonomy(path: List[Tuple[float, float]], autonomy: float) -> float:
+    if not path:
+        return 0
+    if autonomy <= 0:
+        return _INVALID_ROUTE_PENALTY
+
+    reference = _REFERENCE_CITY if _REFERENCE_CITY is not None else path[0]
+    rotated = _rotate_to_reference(path, reference)
+    if rotated is None:
+        return _INVALID_ROUTE_PENALTY
+
+    total = 0.0
+    remaining = autonomy
+    current = reference
+
+    for next_city in rotated[1:]:
+        cost_to_next = _cost_between(current, next_city)
+        cost_next_to_ref = _cost_between(next_city, reference)
+
+        if cost_to_next + cost_next_to_ref > autonomy:
+            return _INVALID_ROUTE_PENALTY
+
+        if current != reference and remaining < cost_to_next + cost_next_to_ref:
+            cost_back = _cost_between(current, reference)
+            if cost_back > remaining:
+                return _INVALID_ROUTE_PENALTY
+            total += cost_back
+            remaining = autonomy
+            current = reference
+            cost_to_next = _cost_between(current, next_city)
+            cost_next_to_ref = _cost_between(next_city, reference)
+            if cost_to_next + cost_next_to_ref > autonomy:
+                return _INVALID_ROUTE_PENALTY
+
+        if remaining < cost_to_next:
+            return _INVALID_ROUTE_PENALTY
+
+        total += cost_to_next
+        remaining -= cost_to_next
+        current = next_city
+
+    if current != reference:
+        cost_back = _cost_between(current, reference)
+        if cost_back > remaining:
+            return _INVALID_ROUTE_PENALTY
+        total += cost_back
+
+    return total
 
 def generate_random_population(cities_location: List[Tuple[float, float]], population_size: int) -> List[List[Tuple[float, float]]]:
     """
@@ -206,6 +293,7 @@ def calculate_fitness(path: List[Tuple[float, float]]) -> float:
     Calculate the fitness of a given path.
 
     If asymmetric costs are configured (ATSP), the directional cost matrix is used.
+    If car autonomy is configured, the route is evaluated with refueling at the reference city.
     Otherwise, the total Euclidean distance of the path is returned.
 
     Parameters:
@@ -215,7 +303,10 @@ def calculate_fitness(path: List[Tuple[float, float]]) -> float:
     Returns:
     float: The total distance/cost of the path.
     """
-    distance = 0
+    if _CAR_AUTONOMY is not None:
+        return _route_cost_with_autonomy(path, _CAR_AUTONOMY)
+
+    distance = 0.0
     n = len(path)
     if n == 0:
         return 0

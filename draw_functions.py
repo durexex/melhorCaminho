@@ -51,6 +51,9 @@ def build_solution_figure(
     city_color: Tuple[int, int, int] = (255, 0, 0),
     best_color: Tuple[int, int, int] = (0, 0, 255),
     candidate_color: Tuple[int, int, int] = (128, 128, 128),
+    reference_city: Optional[Tuple[int, int]] = None,
+    reference_color: Tuple[int, int, int] = (0, 255, 0),
+    reference_radius: Optional[int] = None,
     width: Optional[int] = None,
     height: Optional[int] = None,
     x_offset: Optional[int] = None,
@@ -58,6 +61,9 @@ def build_solution_figure(
 ):
     fig, ax = plt.subplots(figsize=(7, 7), dpi=100)
     draw_cities(ax, cities_locations, city_color, node_radius)
+    if reference_city is not None:
+        radius = reference_radius if reference_radius is not None else max(node_radius + 2, 2)
+        draw_cities(ax, [reference_city], reference_color, radius)
     if candidate_path:
         draw_paths(ax, candidate_path, candidate_color, width=1)
     if best_path:

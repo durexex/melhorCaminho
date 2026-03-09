@@ -1,15 +1,34 @@
+Entregas técnicas para PROJETO 2 (Otimização de Rotas Médicas):
 
-# Qualidade da solução
-# Local search: 2-opt, 3-opt, or-opt pós‑crossover para refinar.
-# Heurística híbrida: inicializar parte da população com greedy/convex hull + random.
+1. Sistema de Otimização de Rotas via Algoritmos Genéticos
+  ● Desenvolver um sistema que resolva o problema do caixeiro viajante (TSP) 
+    para otimizar rotas de entrega de medicamentos e insumos:
+    ○ Implementar a representação genética adequada para rotas;
+    ○ Desenvolver operadores genéticos especializados (seleção, crossover, mutação) para o problema de roteamento;
+    ○ Criar uma função fitness que considere distância, prioridade de entregas e outras restrições relevantes.
 
-# Evolução
-# Elitismo controlado: preservar top k mas evitar convergência prematura.
-# Diversidade: penalizar rotas muito parecidas.
+  ● Incluir restrições realistas como:
+    ○ Prioridades diferentes para entregas (medicamentos críticos vs. insumos regulares);
+    ○ Capacidade limitada de carga dos veículos; Tech Challenge Página 5 de 8
+    ○ Autonomia limitada dos veículos (distância máxima que pode ser percorrida);
+    ○ Múltiplos veículos disponíveis (ampliando para o problema de roteamento de veículos - VRP);
+    ○ Outras restrições que achar interessante.
 
-# Seleção e crossover
-##### Crossover especializado: Edge Recombination, PMX, OX2.
-# Seleção por torneio ajustável: tamanho do torneio muda ao longo das gerações.
+  ● Visualizar as rotas otimizadas em um mapa para fácil interpretação;
+    Observação importante: será fornecido um código base de TSP em Python como ponto de partida.
+    Os(as) alunos(as) deverão modificar esse código para incorporar as restrições adicionais e
+    torná-lo mais realista para o contexto hospitalar.
 
-# Critérios de parada
-##### Estagnação: para se não melhora após N gerações.
+2. Integração com LLMs para Geração de Instruções e Relatórios
+  ● Utilizar uma LLM pré-treinada para:
+    ○ Gerar instruções detalhadas para motoristas e equipes de entrega com base nas rotas otimizadas;
+    ○ Criar relatórios diários/semanais sobre eficiência de rotas, economia de tempo e recursos;
+    ○ Sugerir melhorias no processo com base nos padrões identificados.
+  ● Implementar prompts eficientes para extrair informações úteis da LLM;
+  ● Permitir que o sistema responda a perguntas em linguagem natural sobre as rotas e entregas.
+
+3. Código e Organização (para ambos os projetos)
+  ● Projeto Python bem estruturado, utilizando ambiente virtual (Poetry, Pipenv ou venv);
+  ● Documentação detalhada, incluindo diagramas de arquitetura;
+  ● Testes automatizados para validação de funcionalidades;
+  ● Se optado pela implementação em nuvem: Infraestrutura como código (IaC) para provisionamento dos recursos.
