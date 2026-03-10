@@ -1,5 +1,7 @@
 ﻿import random
 import os
+import csv
+import io
 from pathlib import Path
 from dotenv import load_dotenv
 from genetic_algorithm import *
@@ -71,6 +73,74 @@ load_dotenv(Path(__file__).with_name(".env"))
 
 st.set_page_config(page_title="TSP Solver", layout="wide")
 st.title("TSP Solver - Algoritmo Genetico")
+st.markdown(
+    """
+<style>
+:root {
+  --bg: #0b0b0c;
+  --panel: #111216;
+  --panel-2: #1b1d23;
+  --panel-3: #22252c;
+  --border: #2a2d36;
+  --text: #f3f4f6;
+  --muted: #a6adbb;
+  --accent: #ff4b4b;
+}
+div[data-testid="stAppViewContainer"],
+section.main > div {
+  background: var(--bg);
+  color: var(--text);
+}
+div[data-testid="stHeader"] { background: transparent; }
+div[data-testid="stTabs"] button[aria-selected="true"] {
+  color: var(--accent) !important;
+  border-bottom: 2px solid var(--accent) !important;
+}
+.priority-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 18px 18px 14px 18px;
+}
+.priorities-wrap {
+  margin-left: 0;
+  padding-left: 0;
+}
+.priority-id {
+  font-weight: 600;
+  margin: 8px 0 12px 0;
+}
+.priority-label {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin-bottom: 6px;
+}
+div[data-testid="stTextInput"] input,
+div[data-testid="stNumberInput"] input,
+div[data-testid="stTextArea"] textarea {
+  background: var(--panel-2) !important;
+  color: var(--text) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 10px !important;
+}
+div[data-testid="stNumberInput"] button {
+  color: var(--text) !important;
+}
+button[kind="primary"] {
+  background: var(--panel-3) !important;
+  border: 1px solid var(--border) !important;
+  color: var(--text) !important;
+}
+</style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+def _safe_rerun():
+    rerun_fn = getattr(st, "rerun", None) or getattr(st, "experimental_rerun", None)
+    if rerun_fn is not None:
+        rerun_fn()
 
 
 def _coerce_config_value(value, template):
@@ -83,6 +153,112 @@ def _coerce_config_value(value, template):
     if isinstance(template, float):
         return _parse_float(value, default=template)
     return _parse_str(value, default=template)
+
+
+def _build_priority_rules(priority_definitions):
+    rules = {}
+    for item in priority_definitions:
+        priority_id = item.get("id")
+        if not priority_id:
+            continue
+        rules[priority_id] = {
+            "id": priority_id,
+            "label": item.get("label") or priority_id,
+            "description": item.get("description") or "",
+            "weight_multiplier": _parse_float(item.get("weight_multiplier"), default=1.0),
+            "penalty_per_km": _parse_float(item.get("penalty_per_km"), default=1.0),
+            "max_delay_min": _parse_int(item.get("max_delay_min"), default=0),
+        }
+    return rules
+
+
+def _parse_city_priority_csv(uploaded_file, cities_locations, priority_rules):
+    overrides = {}
+    errors = []
+    if uploaded_file is None:
+        return overrides, errors
+
+    try:
+        text = uploaded_file.getvalue().decode("utf-8")
+    except UnicodeDecodeError:
+        text = uploaded_file.getvalue().decode("latin-1")
+
+    reader = csv.DictReader(io.StringIO(text))
+    if not reader.fieldnames:
+        errors.append("CSV sem cabecalho.")
+        return overrides, errors
+
+    coord_index = {city: idx for idx, city in enumerate(cities_locations)}
+    priority_ids = set(priority_rules.keys())
+
+    for row_number, row in enumerate(reader, start=2):
+        if not any((value or "").strip() for value in row.values()):
+            continue
+
+        priority = (
+            row.get("priority")
+            or row.get("prioridade")
+            or row.get("priority_id")
+            or row.get("prioridade_id")
+            or ""
+        ).strip()
+        if priority and priority not in priority_ids:
+            errors.append(f"Linha {row_number}: prioridade desconhecida '{priority}'.")
+            continue
+
+        idx = None
+        for key in ("index", "idx", "city_index", "cidade_index"):
+            raw = row.get(key)
+            if raw is not None and str(raw).strip() != "":
+                try:
+                    idx = int(float(raw))
+                except ValueError:
+                    errors.append(f"Linha {row_number}: index invalido '{raw}'.")
+                break
+
+        if idx is None:
+            x_val = row.get("x") or row.get("city_x") or row.get("lon") or row.get("longitude")
+            y_val = row.get("y") or row.get("city_y") or row.get("lat") or row.get("latitude")
+            if (x_val is None or y_val is None) and row.get("city"):
+                parts = row.get("city").split(",", 1)
+                if len(parts) == 2:
+                    x_val, y_val = parts[0].strip(), parts[1].strip()
+            if x_val is not None and y_val is not None:
+                try:
+                    coord = (int(float(x_val)), int(float(y_val)))
+                except ValueError:
+                    coord = (float(x_val), float(y_val))
+                idx = coord_index.get(coord)
+                if idx is None:
+                    try:
+                        coord = (float(x_val), float(y_val))
+                    except ValueError:
+                        coord = None
+                    if coord is not None:
+                        idx = coord_index.get(coord)
+
+        if idx is None:
+            errors.append(f"Linha {row_number}: cidade nao encontrada.")
+            continue
+        if idx < 0 or idx >= len(cities_locations):
+            errors.append(f"Linha {row_number}: index fora do intervalo ({idx}).")
+            continue
+
+        if not priority:
+            priority = next(iter(priority_ids), None)
+        overrides[idx] = priority
+
+    return overrides, errors
+
+
+def _build_city_priority_csv(cities_locations, city_overrides, default_priority_id):
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["index", "x", "y", "priority"])
+    for idx, city in enumerate(cities_locations):
+        priority_id = city_overrides.get(idx, default_priority_id)
+        writer.writerow([idx, city[0], city[1], priority_id])
+    return output.getvalue()
 
 _config_defaults = {
     "PLOT_X_OFFSET": _parse_int(os.getenv("PLOT_X_OFFSET")),
@@ -149,6 +325,30 @@ _config_order = [
     "MUTATION_PROBABILITY_STEP",
     "JUST_SWAP",
 ]
+
+DELIVERY_PRIORITIES = [
+    {
+        "id": "critical_meds",
+        "label": "Medicamentos criticos",
+        "description": "Urgencia alta, penalidade maior por atrasos.",
+        "weight_multiplier": 2.0,
+        "penalty_per_km": 1.5,
+        "max_delay_min": 30,
+    },
+    {
+        "id": "regular_supplies",
+        "label": "Insumos regulares",
+        "description": "Urgencia normal, penalidade padrao.",
+        "weight_multiplier": 1.0,
+        "penalty_per_km": 1.0,
+        "max_delay_min": 240,
+    },
+]
+
+_priority_definitions = st.session_state.get("priority_overrides", DELIVERY_PRIORITIES)
+_priority_rules = _build_priority_rules(_priority_definitions)
+_priority_ids = list(_priority_rules.keys())
+_default_priority_id = _priority_ids[0] if _priority_ids else None
 
 _config = dict(_config_defaults)
 if "config_overrides" in st.session_state:
@@ -292,6 +492,24 @@ else:
             )
         set_asymmetric_costs(cities_locations, asymmetric_costs)
 
+_city_priority_overrides = st.session_state.get("city_priority_overrides", {})
+_city_priorities = []
+for i, city in enumerate(cities_locations):
+    priority_id = _city_priority_overrides.get(i, _default_priority_id)
+    if priority_id not in _priority_rules:
+        priority_id = _default_priority_id
+    _city_priorities.append(priority_id)
+
+if _priority_rules and _default_priority_id is not None:
+    set_delivery_priorities(
+        cities_locations,
+        _city_priorities,
+        _priority_rules,
+        default_priority_id=_default_priority_id,
+    )
+else:
+    clear_delivery_priorities()
+
 if _car_autonomy is not None:
     set_car_autonomy(_car_autonomy, reference_city=cities_locations[0])
 else:
@@ -327,12 +545,21 @@ stagnation_count = 0
 choosen_generation = 0
 old_best_solution = 0
 
-status_placeholder = st.empty()
-plot_col, map_col = st.columns([1, 2])
-fitness_placeholder = plot_col.empty()
-map_tab, heatmap_tab, settings_tab = map_col.tabs(["Mapa", "Mapa de calor", "Configuracoes"])
-map_placeholder = map_tab.empty()
-progress = st.progress(0)
+status_placeholder = None
+fitness_placeholder = None
+map_placeholder = None
+progress = None
+
+map_tab, heatmap_tab, settings_tab, priorities_tab = st.tabs(
+    ["Mapa", "Mapa de calor", "Configuracoes", "Prioridades"]
+)
+
+with map_tab:
+    status_placeholder = st.empty()
+    plot_col, map_col = st.columns([1, 2])
+    fitness_placeholder = plot_col.empty()
+    map_placeholder = map_col.empty()
+    progress = st.progress(0)
 
 ref_city = cities_locations[0] if cities_locations else None
 with st.sidebar:
@@ -345,6 +572,10 @@ with st.sidebar:
         st.write("Cidade de referencia: N/A")
     else:
         st.write(f"Cidade de referencia: {ref_city}")
+    if "run_ga" not in st.session_state:
+        st.session_state.run_ga = False
+    if st.button("Play", type="primary"):
+        st.session_state.run_ga = True
 
 with settings_tab:
     st.subheader("Configuracoes do .env")
@@ -368,7 +599,183 @@ with settings_tab:
         for key, value in edited_values.items():
             overrides[key] = _coerce_config_value(value, _config_defaults.get(key))
         st.session_state.config_overrides = overrides
-        st.experimental_rerun()
+        _safe_rerun()
+
+with priorities_tab:
+    st.markdown("<div class=\"priorities-wrap\">", unsafe_allow_html=True)
+    st.subheader("Prioridades de entrega")
+    st.caption("Edite as prioridades e aplique para atualizar a funcao fitness.")
+    if not _priority_ids:
+        st.warning("Nenhuma prioridade configurada.")
+    else:
+        updated_definitions = []
+        st.markdown("<div class=\"priority-card\">", unsafe_allow_html=True)
+        with st.form("priority_definitions_form"):
+            for item in _priority_definitions:
+                priority_id = item.get("id")
+                if not priority_id:
+                    continue
+                st.markdown(f"<div class=\"priority-id\">{priority_id}</div>", unsafe_allow_html=True)
+                label_col, weight_col, penalty_col, delay_col = st.columns(4)
+                with label_col:
+                    st.markdown("<div class=\"priority-label\">Label</div>", unsafe_allow_html=True)
+                    label = st.text_input(
+                        "Label",
+                        value=str(item.get("label") or priority_id),
+                        key=f"priority_label_{priority_id}",
+                        label_visibility="collapsed",
+                    )
+                with weight_col:
+                    st.markdown("<div class=\"priority-label\">Peso</div>", unsafe_allow_html=True)
+                    weight_multiplier = st.number_input(
+                        "Peso",
+                        value=float(item.get("weight_multiplier") or 1.0),
+                        step=0.1,
+                        key=f"priority_weight_{priority_id}",
+                        label_visibility="collapsed",
+                    )
+                with penalty_col:
+                    st.markdown("<div class=\"priority-label\">Penalidade por km</div>", unsafe_allow_html=True)
+                    penalty_per_km = st.number_input(
+                        "Penalidade por km",
+                        value=float(item.get("penalty_per_km") or 1.0),
+                        step=0.1,
+                        key=f"priority_penalty_{priority_id}",
+                        label_visibility="collapsed",
+                    )
+                with delay_col:
+                    st.markdown("<div class=\"priority-label\">Max atraso (min)</div>", unsafe_allow_html=True)
+                    max_delay_min = st.number_input(
+                        "Max atraso (min)",
+                        value=int(item.get("max_delay_min") or 0),
+                        step=5,
+                        key=f"priority_delay_{priority_id}",
+                        label_visibility="collapsed",
+                    )
+                st.markdown("<div class=\"priority-label\">Descricao</div>", unsafe_allow_html=True)
+                description = st.text_area(
+                    "Descricao",
+                    value=str(item.get("description") or ""),
+                    key=f"priority_desc_{priority_id}",
+                    label_visibility="collapsed",
+                    height=70,
+                )
+                updated_definitions.append(
+                    {
+                        "id": priority_id,
+                        "label": label,
+                        "description": description,
+                        "weight_multiplier": weight_multiplier,
+                        "penalty_per_km": penalty_per_km,
+                        "max_delay_min": max_delay_min,
+                    }
+                )
+            priorities_submitted = st.form_submit_button("Aplicar prioridades")
+        st.markdown("</div>", unsafe_allow_html=True)
+        if priorities_submitted:
+            st.session_state.priority_overrides = updated_definitions
+            _safe_rerun()
+
+    st.divider()
+    st.subheader("Prioridade por cidade")
+    if not cities_locations:
+        st.info("Nenhuma cidade carregada.")
+    else:
+        csv_file = st.file_uploader(
+            "CSV de prioridades por cidade",
+            type=["csv"],
+            help="Colunas suportadas: index/idx/city_index ou x,y,priority.",
+            key="priority_csv_upload",
+        )
+        st.caption("Exemplo de CSV:")
+        st.code(
+            "index,priority\n0,critical_meds\n1,regular_supplies",
+            language="csv",
+        )
+        if st.button("Aplicar CSV", type="secondary"):
+            if csv_file is None:
+                st.info("Selecione um arquivo CSV.")
+            else:
+                csv_overrides, csv_errors = _parse_city_priority_csv(
+                    csv_file,
+                    cities_locations,
+                    _priority_rules,
+                )
+                if csv_errors:
+                    st.warning("Erros no CSV:\n- " + "\n- ".join(csv_errors))
+                if csv_overrides:
+                    merged_overrides = dict(_city_priority_overrides)
+                    merged_overrides.update(csv_overrides)
+                    st.session_state.city_priority_overrides = merged_overrides
+                    _safe_rerun()
+                elif not csv_errors:
+                    st.info("Nenhuma linha valida encontrada no CSV.")
+
+        with st.expander("Editar manualmente por cidade"):
+            updated_city_overrides = {}
+            cols = st.columns(2)
+            for index, city in enumerate(cities_locations):
+                current_priority = _city_priority_overrides.get(index, _default_priority_id)
+                if current_priority not in _priority_rules:
+                    current_priority = _default_priority_id
+                option_index = _priority_ids.index(current_priority)
+                col = cols[index % 2]
+                with col:
+                    selected = st.selectbox(
+                        f"Cidade {index} ({city[0]}, {city[1]})",
+                        options=_priority_ids,
+                        index=option_index,
+                        format_func=lambda pid: f"{pid} - {_priority_rules[pid]['label']}",
+                        key=f"city_priority_{index}",
+                    )
+                    updated_city_overrides[index] = selected
+
+            csv_payload = _build_city_priority_csv(
+                cities_locations,
+                updated_city_overrides,
+                _default_priority_id,
+            )
+            apply_col, download_col = st.columns([1, 1])
+            with apply_col:
+                cities_submitted = st.button("Aplicar prioridades por cidade")
+            with download_col:
+                st.download_button(
+                    "Gravar CSV prioridades",
+                    data=csv_payload,
+                    file_name="prioridades_cidades.csv",
+                    mime="text/csv",
+                )
+            if cities_submitted:
+                st.session_state.city_priority_overrides = updated_city_overrides
+                _safe_rerun()
+
+        priority_summary = {}
+        for priority_id in _priority_ids:
+            priority_summary[priority_id] = 0
+        for priority_id in _city_priorities:
+            if priority_id in priority_summary:
+                priority_summary[priority_id] += 1
+        summary_rows = [
+            {
+                "Prioridade": f"{pid} - {_priority_rules[pid]['label']}",
+                "Cidades": count,
+            }
+            for pid, count in priority_summary.items()
+        ]
+        st.table(summary_rows)
+
+        city_rows = [
+            {
+                "Cidade": index,
+                "X": city[0],
+                "Y": city[1],
+                "Prioridade": _city_priorities[index],
+            }
+            for index, city in enumerate(cities_locations)
+        ]
+        st.dataframe(city_rows, use_container_width=True, hide_index=True)
+
+    st.markdown("</div>", unsafe_allow_html=True)
 
 if _atsp_enabled and os.path.exists(_asymmetric_costs_file):
     with heatmap_tab:
@@ -377,6 +784,11 @@ if _atsp_enabled and os.path.exists(_asymmetric_costs_file):
         fig.colorbar(im, ax=ax)
         st.pyplot(fig, width="stretch")
         plt.close(fig)
+
+# Main loop
+if not st.session_state.run_ga:
+    st.info("Clique em Play para iniciar o processamento.")
+    st.stop()
 
 # Main loop
 for generation in range(1, _max_generation_allowed + 1):

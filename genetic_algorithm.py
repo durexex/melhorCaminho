@@ -9,6 +9,9 @@ _CITY_INDEX: Optional[dict[Tuple[float, float], int]] = None
 _CAR_AUTONOMY: Optional[float] = None
 _REFERENCE_CITY: Optional[Tuple[float, float]] = None
 _INVALID_ROUTE_PENALTY = 1e12
+_CITY_PRIORITY: Optional[dict[Tuple[float, float], str]] = None
+_PRIORITY_RULES: Optional[dict[str, dict]] = None
+_DEFAULT_PRIORITY_ID: Optional[str] = None
 
 
 def set_asymmetric_costs(cities_location: List[Tuple[float, float]], costs: List[List[float]]) -> None:
@@ -57,6 +60,62 @@ def clear_car_autonomy() -> None:
     _REFERENCE_CITY = None
 
 
+def set_delivery_priorities(
+    cities_location: List[Tuple[float, float]],
+    city_priorities,
+    priority_rules: dict,
+    default_priority_id: Optional[str] = None,
+) -> None:
+    """
+    Configure delivery priorities per city.
+
+    Parameters:
+    - cities_location (List[Tuple[float, float]]): List of city coordinates.
+    - city_priorities: list aligned with cities_location or dict (index->priority_id or city->priority_id).
+    - priority_rules (dict): Rules per priority id (weight_multiplier, penalty_per_km, etc).
+    - default_priority_id (Optional[str]): Fallback priority id.
+    """
+    if not cities_location or not priority_rules:
+        clear_delivery_priorities()
+        return
+
+    priority_ids = set(priority_rules.keys())
+    if default_priority_id is None or default_priority_id not in priority_ids:
+        default_priority_id = next(iter(priority_ids))
+
+    mapping: dict[Tuple[float, float], str] = {}
+    if isinstance(city_priorities, dict):
+        for i, city in enumerate(cities_location):
+            priority_id = city_priorities.get(i, city_priorities.get(city, default_priority_id))
+            if priority_id not in priority_ids:
+                priority_id = default_priority_id
+            mapping[city] = priority_id
+    elif isinstance(city_priorities, (list, tuple)):
+        for i, city in enumerate(cities_location):
+            if i < len(city_priorities):
+                priority_id = city_priorities[i]
+            else:
+                priority_id = default_priority_id
+            if priority_id not in priority_ids:
+                priority_id = default_priority_id
+            mapping[city] = priority_id
+    else:
+        mapping = {city: default_priority_id for city in cities_location}
+
+    global _CITY_PRIORITY, _PRIORITY_RULES, _DEFAULT_PRIORITY_ID
+    _CITY_PRIORITY = mapping
+    _PRIORITY_RULES = priority_rules
+    _DEFAULT_PRIORITY_ID = default_priority_id
+
+
+def clear_delivery_priorities() -> None:
+    """Disable delivery priorities."""
+    global _CITY_PRIORITY, _PRIORITY_RULES, _DEFAULT_PRIORITY_ID
+    _CITY_PRIORITY = None
+    _PRIORITY_RULES = None
+    _DEFAULT_PRIORITY_ID = None
+
+
 def _cost_between(point1: Tuple[float, float], point2: Tuple[float, float]) -> float:
     if _ASYMMETRIC_COSTS is not None and _CITY_INDEX is not None:
         try:
@@ -64,6 +123,41 @@ def _cost_between(point1: Tuple[float, float], point2: Tuple[float, float]) -> f
         except KeyError:
             return calculate_distance(point1, point2)
     return calculate_distance(point1, point2)
+
+
+def _priority_factor_for_city(city: Tuple[float, float]) -> float:
+    if _CITY_PRIORITY is None or _PRIORITY_RULES is None or _DEFAULT_PRIORITY_ID is None:
+        return 1.0
+    priority_id = _CITY_PRIORITY.get(city, _DEFAULT_PRIORITY_ID)
+    rule = _PRIORITY_RULES.get(priority_id)
+    if not rule:
+        return 1.0
+    try:
+        weight = float(rule.get("weight_multiplier", 1.0))
+    except (TypeError, ValueError):
+        weight = 1.0
+    try:
+        penalty = float(rule.get("penalty_per_km", 1.0))
+    except (TypeError, ValueError):
+        penalty = 1.0
+    return weight * penalty
+
+
+def _priority_penalty(path: List[Tuple[float, float]]) -> float:
+    if _CITY_PRIORITY is None or _PRIORITY_RULES is None or _DEFAULT_PRIORITY_ID is None:
+        return 0.0
+    n = len(path)
+    if n == 0:
+        return 0.0
+    penalty_total = 0.0
+    for i in range(n):
+        from_city = path[i]
+        to_city = path[(i + 1) % n]
+        distance = _cost_between(from_city, to_city)
+        factor = _priority_factor_for_city(to_city)
+        if factor > 1.0:
+            penalty_total += distance * (factor - 1.0)
+    return penalty_total
 
 
 def _rotate_to_reference(path: List[Tuple[float, float]], reference_city: Tuple[float, float]) -> Optional[List[Tuple[float, float]]]:
@@ -294,6 +388,7 @@ def calculate_fitness(path: List[Tuple[float, float]]) -> float:
 
     If asymmetric costs are configured (ATSP), the directional cost matrix is used.
     If car autonomy is configured, the route is evaluated with refueling at the reference city.
+    If delivery priorities are configured, a penalty is added based on priority weights.
     Otherwise, the total Euclidean distance of the path is returned.
 
     Parameters:
@@ -304,7 +399,10 @@ def calculate_fitness(path: List[Tuple[float, float]]) -> float:
     float: The total distance/cost of the path.
     """
     if _CAR_AUTONOMY is not None:
-        return _route_cost_with_autonomy(path, _CAR_AUTONOMY)
+        base_cost = _route_cost_with_autonomy(path, _CAR_AUTONOMY)
+        if base_cost >= _INVALID_ROUTE_PENALTY:
+            return base_cost
+        return base_cost + _priority_penalty(path)
 
     distance = 0.0
     n = len(path)
@@ -322,12 +420,12 @@ def calculate_fitness(path: List[Tuple[float, float]]) -> float:
         if indices is not None:
             for i in range(n):
                 distance += costs[indices[i]][indices[(i + 1) % n]]
-            return distance
+            return distance + _priority_penalty(path)
 
     for i in range(n):
         distance += calculate_distance(path[i], path[(i + 1) % n])
 
-    return distance
+    return distance + _priority_penalty(path)
 
 
 def order_crossover(parent1: List[Tuple[float, float]], parent2: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
