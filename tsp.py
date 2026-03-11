@@ -1,13 +1,12 @@
 ﻿import random
 import os
-import csv
-import io
 from pathlib import Path
 from dotenv import load_dotenv
 from genetic_algorithm import *
 from demo_tournament import tournament_selection
 from draw_functions import draw_plot, build_solution_figure
 from utils import ReportData, set_report_data, generate_report
+from priority_utils import parse_city_priority_csv, build_city_priority_csv
 import numpy as np
 from benchmark_att48 import *
 from datetime import datetime
@@ -172,93 +171,6 @@ def _build_priority_rules(priority_definitions):
     return rules
 
 
-def _parse_city_priority_csv(uploaded_file, cities_locations, priority_rules):
-    overrides = {}
-    errors = []
-    if uploaded_file is None:
-        return overrides, errors
-
-    try:
-        text = uploaded_file.getvalue().decode("utf-8")
-    except UnicodeDecodeError:
-        text = uploaded_file.getvalue().decode("latin-1")
-
-    reader = csv.DictReader(io.StringIO(text))
-    if not reader.fieldnames:
-        errors.append("CSV sem cabecalho.")
-        return overrides, errors
-
-    coord_index = {city: idx for idx, city in enumerate(cities_locations)}
-    priority_ids = set(priority_rules.keys())
-
-    for row_number, row in enumerate(reader, start=2):
-        if not any((value or "").strip() for value in row.values()):
-            continue
-
-        priority = (
-            row.get("priority")
-            or row.get("prioridade")
-            or row.get("priority_id")
-            or row.get("prioridade_id")
-            or ""
-        ).strip()
-        if priority and priority not in priority_ids:
-            errors.append(f"Linha {row_number}: prioridade desconhecida '{priority}'.")
-            continue
-
-        idx = None
-        for key in ("index", "idx", "city_index", "cidade_index"):
-            raw = row.get(key)
-            if raw is not None and str(raw).strip() != "":
-                try:
-                    idx = int(float(raw))
-                except ValueError:
-                    errors.append(f"Linha {row_number}: index invalido '{raw}'.")
-                break
-
-        if idx is None:
-            x_val = row.get("x") or row.get("city_x") or row.get("lon") or row.get("longitude")
-            y_val = row.get("y") or row.get("city_y") or row.get("lat") or row.get("latitude")
-            if (x_val is None or y_val is None) and row.get("city"):
-                parts = row.get("city").split(",", 1)
-                if len(parts) == 2:
-                    x_val, y_val = parts[0].strip(), parts[1].strip()
-            if x_val is not None and y_val is not None:
-                try:
-                    coord = (int(float(x_val)), int(float(y_val)))
-                except ValueError:
-                    coord = (float(x_val), float(y_val))
-                idx = coord_index.get(coord)
-                if idx is None:
-                    try:
-                        coord = (float(x_val), float(y_val))
-                    except ValueError:
-                        coord = None
-                    if coord is not None:
-                        idx = coord_index.get(coord)
-
-        if idx is None:
-            errors.append(f"Linha {row_number}: cidade nao encontrada.")
-            continue
-        if idx < 0 or idx >= len(cities_locations):
-            errors.append(f"Linha {row_number}: index fora do intervalo ({idx}).")
-            continue
-
-        if not priority:
-            priority = next(iter(priority_ids), None)
-        overrides[idx] = priority
-
-    return overrides, errors
-
-
-def _build_city_priority_csv(cities_locations, city_overrides, default_priority_id):
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["index", "x", "y", "priority"])
-    for idx, city in enumerate(cities_locations):
-        priority_id = city_overrides.get(idx, default_priority_id)
-        writer.writerow([idx, city[0], city[1], priority_id])
-    return output.getvalue()
 
 _config_defaults = {
     "PLOT_X_OFFSET": _parse_int(os.getenv("PLOT_X_OFFSET")),
@@ -696,7 +608,7 @@ with priorities_tab:
             if csv_file is None:
                 st.info("Selecione um arquivo CSV.")
             else:
-                csv_overrides, csv_errors = _parse_city_priority_csv(
+                csv_overrides, csv_errors = parse_city_priority_csv(
                     csv_file,
                     cities_locations,
                     _priority_rules,
@@ -730,7 +642,7 @@ with priorities_tab:
                     )
                     updated_city_overrides[index] = selected
 
-            csv_payload = _build_city_priority_csv(
+            csv_payload = build_city_priority_csv(
                 cities_locations,
                 updated_city_overrides,
                 _default_priority_id,
