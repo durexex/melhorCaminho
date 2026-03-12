@@ -1,4 +1,4 @@
-﻿import random
+import random
 import os
 from pathlib import Path
 from dotenv import load_dotenv
@@ -7,6 +7,8 @@ from demo_tournament import tournament_selection
 from draw_functions import draw_plot, build_solution_figure
 from utils import ReportData, set_report_data, generate_report
 from priority_utils import parse_city_priority_csv, build_city_priority_csv
+from llm_service import LLMService
+from pdf_service import create_pdf_report
 import numpy as np
 from benchmark_att48 import *
 from datetime import datetime
@@ -140,6 +142,38 @@ def _safe_rerun():
     rerun_fn = getattr(st, "rerun", None) or getattr(st, "experimental_rerun", None)
     if rerun_fn is not None:
         rerun_fn()
+
+
+def _friendly_llm_error_message(exc: Exception) -> str:
+    cause = getattr(exc, "__cause__", None) or exc
+    cause_type = type(cause).__name__.lower()
+    msg = str(cause).lower()
+
+    if "authentication" in cause_type or "api_key" in msg or "invalid api key" in msg:
+        return (
+            "Chave da API invalida ou expirada. "
+            "Verifique a variavel OPENAI_API_KEY no arquivo .env."
+        )
+    if "ratelimit" in cause_type or "rate_limit" in msg or "rate limit" in msg:
+        return (
+            "Limite de requisicoes excedido. "
+            "Aguarde alguns minutos e tente novamente."
+        )
+    if "connection" in cause_type or "connect" in msg:
+        return (
+            "Erro de conexao com a API da OpenAI. "
+            "Verifique sua conexao com a internet e tente novamente."
+        )
+    return f"Erro inesperado: {exc}"
+
+
+@st.cache_resource
+def _get_llm_service():
+    api_key = os.getenv("OPENAI_API_KEY")
+    model = os.getenv("LLM_MODEL", "gpt-4")
+    if not api_key or api_key == "sk-your-api-key-here":
+        return None
+    return LLMService(api_key=api_key, model=model)
 
 
 def _coerce_config_value(value, template):
@@ -462,8 +496,8 @@ fitness_placeholder = None
 map_placeholder = None
 progress = None
 
-map_tab, heatmap_tab, settings_tab, priorities_tab = st.tabs(
-    ["Mapa", "Mapa de calor", "Configuracoes", "Prioridades"]
+map_tab, heatmap_tab, settings_tab, priorities_tab, ai_tab = st.tabs(
+    ["Mapa", "Mapa de calor", "Configuracoes", "Prioridades", "Assistente IA"]
 )
 
 with map_tab:
@@ -697,12 +731,154 @@ if _atsp_enabled and os.path.exists(_asymmetric_costs_file):
         st.pyplot(fig, width="stretch")
         plt.close(fig)
 
-# Main loop
+with ai_tab:
+    _route_data = st.session_state.get("last_route_data")
+
+    if _route_data is None:
+        st.info(
+            "Nenhuma rota otimizada disponivel. "
+            "Execute a otimizacao primeiro clicando em **Play**."
+        )
+    else:
+        _llm_svc = _get_llm_service()
+
+        if _llm_svc is None:
+            st.warning(
+                "Chave da API OpenAI nao configurada. "
+                "Defina `OPENAI_API_KEY` no arquivo `.env` para habilitar o Assistente IA."
+            )
+        else:
+            nav_col, eff_col = st.columns(2)
+
+            with nav_col:
+                if st.button(
+                    "Gerar Instrucoes de Navegacao",
+                    key="btn_gen_nav",
+                    use_container_width=True,
+                ):
+                    with st.spinner("Gerando instrucoes de navegacao..."):
+                        try:
+                            result = _llm_svc.generate_navigation_instructions(_route_data)
+                            st.session_state["nav_instructions_result"] = result
+                            st.success("Instrucoes geradas com sucesso!")
+                        except Exception as exc:
+                            st.error(_friendly_llm_error_message(exc))
+
+            with eff_col:
+                if st.button(
+                    "Gerar Relatorio de Eficiencia",
+                    key="btn_gen_eff",
+                    use_container_width=True,
+                ):
+                    with st.spinner("Gerando relatorio de eficiencia..."):
+                        try:
+                            result = _llm_svc.generate_efficiency_report(_route_data)
+                            st.session_state["efficiency_report_result"] = result
+                            st.success("Relatorio gerado com sucesso!")
+                        except Exception as exc:
+                            st.error(_friendly_llm_error_message(exc))
+
+            if "nav_instructions_result" in st.session_state:
+                st.divider()
+                st.subheader("Instrucoes de Navegacao")
+                st.markdown(st.session_state["nav_instructions_result"])
+                nav_pdf = create_pdf_report(
+                    title="Instrucoes de Navegacao",
+                    content=st.session_state["nav_instructions_result"],
+                    filename="instrucoes_navegacao.pdf",
+                )
+                st.download_button(
+                    label="Exportar Instrucoes (PDF)",
+                    data=nav_pdf,
+                    file_name="instrucoes_navegacao.pdf",
+                    mime="application/pdf",
+                    key="dl_nav_pdf",
+                )
+
+            if "efficiency_report_result" in st.session_state:
+                st.divider()
+                st.subheader("Relatorio de Eficiencia")
+                st.markdown(st.session_state["efficiency_report_result"])
+                eff_pdf = create_pdf_report(
+                    title="Relatorio de Eficiencia",
+                    content=st.session_state["efficiency_report_result"],
+                    filename="relatorio_eficiencia.pdf",
+                )
+                st.download_button(
+                    label="Exportar Relatorio (PDF)",
+                    data=eff_pdf,
+                    file_name="relatorio_eficiencia.pdf",
+                    mime="application/pdf",
+                    key="dl_eff_pdf",
+                )
+
+            st.divider()
+            st.subheader("Chat Interativo")
+
+            if "chat_messages" not in st.session_state:
+                st.session_state.chat_messages = []
+
+            for msg in st.session_state.chat_messages:
+                with st.chat_message(msg["role"]):
+                    st.markdown(msg["content"])
+
+            if chat_prompt := st.chat_input(
+                "Faca uma pergunta sobre a rota...",
+                key="ai_chat_input",
+            ):
+                st.session_state.chat_messages.append(
+                    {"role": "user", "content": chat_prompt}
+                )
+                with st.chat_message("user"):
+                    st.markdown(chat_prompt)
+
+                with st.chat_message("assistant"):
+                    with st.spinner("Pensando..."):
+                        try:
+                            chat_reply = _llm_svc.chat_response(
+                                chat_prompt, _route_data
+                            )
+                            st.markdown(chat_reply)
+                        except Exception as exc:
+                            chat_reply = _friendly_llm_error_message(exc)
+                            st.error(chat_reply)
+                st.session_state.chat_messages.append(
+                    {"role": "assistant", "content": chat_reply}
+                )
+
 if not st.session_state.run_ga:
-    st.info("Clique em Play para iniciar o processamento.")
+    if "last_route_data" not in st.session_state:
+        st.info("Clique em Play para iniciar o processamento.")
+    elif "ga_report_text" in st.session_state:
+        with map_tab:
+            if "ga_status_text" in st.session_state:
+                status_placeholder.markdown(st.session_state["ga_status_text"])
+            if "ga_best_fitness_values" in st.session_state:
+                _saved_fv = st.session_state["ga_best_fitness_values"]
+                _fit_fig = draw_plot(
+                    list(range(len(_saved_fv))),
+                    _saved_fv,
+                    y_label="Fitness - Distance (pxls)",
+                )
+                fitness_placeholder.pyplot(_fit_fig, width="stretch")
+                plt.close(_fit_fig)
+            if "ga_best_solution" in st.session_state:
+                _sol_fig = build_solution_figure(
+                    cities_locations,
+                    st.session_state["ga_best_solution"],
+                    candidate_path=None,
+                    node_radius=_node_radius,
+                    reference_city=cities_locations[0] if cities_locations else None,
+                    width=_width,
+                    height=_height,
+                    x_offset=_plot_x_offset,
+                )
+                map_placeholder.pyplot(_sol_fig, width="stretch")
+                plt.close(_sol_fig)
+            progress.progress(100)
+        st.text(st.session_state["ga_report_text"])
     st.stop()
 
-# Main loop
 for generation in range(1, _max_generation_allowed + 1):
     population_fitness = [calculate_fitness(individual) for individual in population]
     population, population_fitness = sort_population(population, population_fitness)
@@ -811,5 +987,29 @@ set_report_data(ReportData(
     output_path=report_output_path,
 ))
 
+_priorities_for_llm = {}
+for _i, _pid in enumerate(_city_priorities):
+    _rule = _priority_rules.get(_pid, {})
+    _priorities_for_llm[_i] = f"{_pid} ({_rule.get('label', _pid)})"
+
+st.session_state["last_route_data"] = {
+    "cities": list(cities_locations),
+    "sequence": list(best_solution_report),
+    "total_distance": best_fitness_report,
+    "num_cities": len(cities_locations),
+    "priorities": _priorities_for_llm,
+}
+
 report_text = generate_report()
 st.text(report_text)
+
+st.session_state["ga_report_text"] = report_text
+st.session_state["ga_status_text"] = (
+    f"**Geracao:** {_max_generation_allowed}  |  "
+    f"**Melhor fitness:** {best_fitness_report:.2f}"
+)
+st.session_state["ga_best_fitness_values"] = list(best_fitness_values)
+st.session_state["ga_best_solution"] = list(best_solution_report)
+
+st.session_state.run_ga = False
+_safe_rerun()
