@@ -34,3 +34,4 @@ cities_locations.txt
 cities_asynmetric_cost_matrix.txt
 cities_demand.csv
 /.venvScriptsactivate
+/.venv
