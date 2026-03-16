@@ -49,3 +49,12 @@ ATSP_ENABLED = True ativa o modo assimétrico.
 ASYMMETRY_FACTOR controla o quanto A→B pode divergir de B→A.
 ASYMMETRY_SEED fixa o resultado para repetibilidade (mude ou use None).
 Se quiser, posso adicionar um switch no Streamlit para ligar/desligar ATSP em tempo real.
+
+
+Integração com LLMs para Geração de Instruções e Relatórios
+  ● Utilizar uma LLM pré-treinada para:
+    ○ Gerar instruções detalhadas para motoristas e equipes de entrega com base nas rotas otimizadas;
+    ○ Criar relatórios diários/semanais sobre eficiência de rotas, economia de tempo e recursos;
+    ○ Sugerir melhorias no processo com base nos padrões identificados.
+  ● Implementar prompts eficientes para extrair informações úteis da LLM;
+  ● Permitir que o sistema responda a perguntas em linguagem natural sobre as rotas e entregas.

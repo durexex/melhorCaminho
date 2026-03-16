@@ -1,4 +1,4 @@
-﻿import random
+import random
 import math
 import copy 
 from typing import List, Tuple, Optional
@@ -12,6 +12,12 @@ _INVALID_ROUTE_PENALTY = 1e12
 _CITY_PRIORITY: Optional[dict[Tuple[float, float], str]] = None
 _PRIORITY_RULES: Optional[dict[str, dict]] = None
 _DEFAULT_PRIORITY_ID: Optional[str] = None
+
+_NUM_VEHICLES: int = 1
+_VEHICLE_CAPACITY_WEIGHT: Optional[float] = None
+_VEHICLE_CAPACITY_VOLUME: Optional[float] = None
+_CITY_DEMANDS: Optional[dict[Tuple[float, float], dict]] = None
+_VRP_DEPOT: Optional[Tuple[float, float]] = None
 
 
 def set_asymmetric_costs(cities_location: List[Tuple[float, float]], costs: List[List[float]]) -> None:
@@ -114,6 +120,156 @@ def clear_delivery_priorities() -> None:
     _CITY_PRIORITY = None
     _PRIORITY_RULES = None
     _DEFAULT_PRIORITY_ID = None
+
+
+def set_vehicle_params(
+    num_vehicles: int = 1,
+    capacity_weight: Optional[float] = None,
+    capacity_volume: Optional[float] = None,
+    depot: Optional[Tuple[float, float]] = None,
+) -> None:
+    global _NUM_VEHICLES, _VEHICLE_CAPACITY_WEIGHT, _VEHICLE_CAPACITY_VOLUME, _VRP_DEPOT
+    _NUM_VEHICLES = max(1, num_vehicles)
+    _VEHICLE_CAPACITY_WEIGHT = capacity_weight
+    _VEHICLE_CAPACITY_VOLUME = capacity_volume
+    _VRP_DEPOT = depot
+
+
+def clear_vehicle_params() -> None:
+    global _NUM_VEHICLES, _VEHICLE_CAPACITY_WEIGHT, _VEHICLE_CAPACITY_VOLUME, _VRP_DEPOT
+    _NUM_VEHICLES = 1
+    _VEHICLE_CAPACITY_WEIGHT = None
+    _VEHICLE_CAPACITY_VOLUME = None
+    _VRP_DEPOT = None
+
+
+def set_city_demands(
+    cities_location: List[Tuple[float, float]],
+    demands: List[dict],
+) -> None:
+    """
+    Store per-city demand data (weight/volume) for use in VRP fitness evaluation.
+
+    Parameters:
+    - cities_location: List of city coordinates.
+    - demands: List of dicts with keys 'weight' and 'volume', aligned with cities_location.
+    """
+    global _CITY_DEMANDS
+    _CITY_DEMANDS = {}
+    for city, demand in zip(cities_location, demands):
+        _CITY_DEMANDS[city] = demand
+
+
+def clear_city_demands() -> None:
+    global _CITY_DEMANDS
+    _CITY_DEMANDS = None
+
+
+def get_city_demand(city: Tuple[float, float]) -> Optional[dict]:
+    if _CITY_DEMANDS is None:
+        return None
+    return _CITY_DEMANDS.get(city)
+
+
+def _get_depot(individual: List[Tuple[float, float]]) -> Optional[Tuple[float, float]]:
+    """Resolve the depot city for VRP. Precedence: explicit VRP depot > autonomy reference > first city."""
+    if _VRP_DEPOT is not None:
+        return _VRP_DEPOT
+    if _REFERENCE_CITY is not None:
+        return _REFERENCE_CITY
+    return individual[0] if individual else None
+
+
+def _is_vrp_active() -> bool:
+    """VRP mode is active when capacity constraints are set or multiple vehicles configured."""
+    return (
+        _NUM_VEHICLES > 1
+        or _VEHICLE_CAPACITY_WEIGHT is not None
+        or _VEHICLE_CAPACITY_VOLUME is not None
+    )
+
+
+def split_routes(
+    individual: List[Tuple[float, float]],
+) -> List[List[Tuple[float, float]]]:
+    """Split a chromosome into sub-routes for VRP.
+
+    Phase 1 (Capacity Split): walks the chromosome and starts a new route
+    whenever the next city would exceed weight or volume capacity.
+
+    Phase 2 (Balance): if the number of routes after phase 1 is less than
+    NUM_VEHICLES, the largest routes are subdivided so that all configured
+    vehicles are utilised, improving workload distribution.
+
+    Returns a list of sub-routes (each a list of cities, excluding the depot).
+    """
+    if not individual:
+        return [[]]
+
+    if not _is_vrp_active():
+        return [list(individual)]
+
+    depot = _get_depot(individual)
+    cities = [c for c in individual if c != depot]
+
+    if not cities:
+        return [[]]
+
+    has_capacity = (
+        _VEHICLE_CAPACITY_WEIGHT is not None or _VEHICLE_CAPACITY_VOLUME is not None
+    )
+
+    # --- Phase 1: capacity-aware greedy split ---
+    if has_capacity:
+        routes: List[List[Tuple[float, float]]] = []
+        current_route: List[Tuple[float, float]] = []
+        current_weight = 0.0
+        current_volume = 0.0
+
+        for city in cities:
+            demand = get_city_demand(city) or {"weight": 0, "volume": 0}
+            city_weight = demand.get("weight", 0)
+            city_volume = demand.get("volume", 0)
+
+            would_exceed_weight = (
+                _VEHICLE_CAPACITY_WEIGHT is not None
+                and current_weight + city_weight > _VEHICLE_CAPACITY_WEIGHT
+            )
+            would_exceed_volume = (
+                _VEHICLE_CAPACITY_VOLUME is not None
+                and current_volume + city_volume > _VEHICLE_CAPACITY_VOLUME
+            )
+
+            if (would_exceed_weight or would_exceed_volume) and current_route:
+                routes.append(current_route)
+                current_route = []
+                current_weight = 0.0
+                current_volume = 0.0
+
+            current_route.append(city)
+            current_weight += city_weight
+            current_volume += city_volume
+
+        if current_route:
+            routes.append(current_route)
+
+        if not routes:
+            routes = [[]]
+    else:
+        routes = [cities]
+
+    # --- Phase 2: balance across NUM_VEHICLES ---
+    if _NUM_VEHICLES > 1:
+        while len(routes) < _NUM_VEHICLES:
+            longest_idx = max(range(len(routes)), key=lambda i: len(routes[i]))
+            longest = routes[longest_idx]
+            if len(longest) <= 1:
+                break
+            mid = len(longest) // 2
+            routes[longest_idx] = longest[:mid]
+            routes.insert(longest_idx + 1, longest[mid:])
+
+    return routes
 
 
 def _cost_between(point1: Tuple[float, float], point2: Tuple[float, float]) -> float:
@@ -382,14 +538,146 @@ def calculate_distance(point1: Tuple[float, float], point2: Tuple[float, float])
     return math.sqrt((point1[0] - point2[0]) ** 2 + (point1[1] - point2[1]) ** 2)
 
 
+def _subroute_cost(
+    route_cities: List[Tuple[float, float]],
+    depot: Tuple[float, float],
+) -> float:
+    """Calculate cost of a sub-route: depot -> cities -> depot.
+
+    Handles autonomy within the sub-route: if the vehicle cannot reach the
+    next city and return to depot with remaining fuel, it refuels at depot first.
+    """
+    if not route_cities:
+        return 0.0
+
+    total = 0.0
+    current = depot
+    autonomy = _CAR_AUTONOMY
+    remaining = autonomy
+
+    for city in route_cities:
+        cost_to_city = _cost_between(current, city)
+        cost_city_to_depot = _cost_between(city, depot)
+
+        if autonomy is not None:
+            cost_depot_to_city = _cost_between(depot, city)
+            if cost_depot_to_city + cost_city_to_depot > autonomy:
+                return _INVALID_ROUTE_PENALTY
+
+            if current != depot and remaining < cost_to_city + cost_city_to_depot:
+                cost_back = _cost_between(current, depot)
+                if cost_back > remaining:
+                    return _INVALID_ROUTE_PENALTY
+                total += cost_back
+                remaining = autonomy
+                current = depot
+                cost_to_city = _cost_between(depot, city)
+
+            if remaining < cost_to_city:
+                return _INVALID_ROUTE_PENALTY
+
+            remaining -= cost_to_city
+        total += cost_to_city
+        current = city
+
+    cost_back = _cost_between(current, depot)
+    if autonomy is not None and remaining is not None and cost_back > remaining:
+        return _INVALID_ROUTE_PENALTY
+    total += cost_back
+
+    return total
+
+
+def _subroute_priority_penalty(
+    route_cities: List[Tuple[float, float]],
+    depot: Tuple[float, float],
+) -> float:
+    """Priority penalty for a sub-route (depot -> cities -> depot)."""
+    if _CITY_PRIORITY is None or _PRIORITY_RULES is None or _DEFAULT_PRIORITY_ID is None:
+        return 0.0
+    if not route_cities:
+        return 0.0
+
+    penalty = 0.0
+
+    first = route_cities[0]
+    distance = _cost_between(depot, first)
+    factor = _priority_factor_for_city(first)
+    if factor > 1.0:
+        penalty += distance * (factor - 1.0)
+
+    for i in range(len(route_cities) - 1):
+        from_city = route_cities[i]
+        to_city = route_cities[i + 1]
+        distance = _cost_between(from_city, to_city)
+        factor = _priority_factor_for_city(to_city)
+        if factor > 1.0:
+            penalty += distance * (factor - 1.0)
+
+    return penalty
+
+
+def _calculate_vrp_fitness(path: List[Tuple[float, float]]) -> float:
+    """Fitness for VRP mode: split + per-subroute cost + vehicle count penalty."""
+    routes = split_routes(path)
+    depot = _get_depot(path)
+
+    if depot is None:
+        return _INVALID_ROUTE_PENALTY
+
+    total_cost = 0.0
+
+    for route in routes:
+        if not route:
+            continue
+        cost = _subroute_cost(route, depot)
+        if cost >= _INVALID_ROUTE_PENALTY:
+            return _INVALID_ROUTE_PENALTY
+        total_cost += cost
+        total_cost += _subroute_priority_penalty(route, depot)
+
+    if len(routes) > _NUM_VEHICLES:
+        total_cost += _INVALID_ROUTE_PENALTY
+
+    return total_cost
+
+
+def evaluate_vrp_routes(
+    individual: List[Tuple[float, float]],
+) -> List[List[Tuple[float, float]]]:
+    """Return full VRP route structure for visualization.
+
+    Each route includes depot at start and end: [depot, city1, ..., cityN, depot].
+    When VRP is not active, returns a single route wrapping all cities.
+    """
+    routes = split_routes(individual)
+    depot = _get_depot(individual)
+
+    if depot is None:
+        return [list(individual)]
+
+    full_routes = []
+    for route in routes:
+        if route:
+            full_routes.append([depot] + route + [depot])
+
+    return full_routes if full_routes else [[depot]]
+
+
 def calculate_fitness(path: List[Tuple[float, float]]) -> float:
     """
     Calculate the fitness of a given path.
 
-    If asymmetric costs are configured (ATSP), the directional cost matrix is used.
-    If car autonomy is configured, the route is evaluated with refueling at the reference city.
-    If delivery priorities are configured, a penalty is added based on priority weights.
-    Otherwise, the total Euclidean distance of the path is returned.
+    When VRP mode is active (capacity constraints or multiple vehicles), the path
+    is split into sub-routes via Greedy Split and each sub-route is costed
+    individually (depot -> cities -> depot), with a massive penalty if the
+    number of routes exceeds the configured vehicle count.
+
+    When VRP is inactive, the original TSP logic is used:
+    - ATSP directional cost matrix if configured.
+    - Autonomy-aware routing with refueling at the reference city.
+    - Priority-weighted penalties.
+    - Euclidean circular tour distance as fallback.
 
     Parameters:
     - path (List[Tuple[float, float]]): A list of tuples representing the path,
@@ -398,6 +686,9 @@ def calculate_fitness(path: List[Tuple[float, float]]) -> float:
     Returns:
     float: The total distance/cost of the path.
     """
+    if _is_vrp_active():
+        return _calculate_vrp_fitness(path)
+
     if _CAR_AUTONOMY is not None:
         base_cost = _route_cost_with_autonomy(path, _CAR_AUTONOMY)
         if base_cost >= _INVALID_ROUTE_PENALTY:
