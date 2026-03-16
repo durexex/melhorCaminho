@@ -1289,12 +1289,35 @@ for _i, _pid in enumerate(_city_priorities):
     _rule = _priority_rules.get(_pid, {})
     _priorities_for_llm[_i] = f"{_pid} ({_rule.get('label', _pid)})"
 
+_demands_for_llm = {}
+for _i, _city in enumerate(cities_locations):
+    _d = _city_demands[_i] if _i < len(_city_demands) else {}
+    _demands_for_llm[_i] = {"weight_kg": _d.get("weight", 0), "volume_m3": _d.get("volume", 0)}
+
+_vehicles_for_llm = []
+if _vrp_active_report and _report_vehicle_stats:
+    for _vs in _report_vehicle_stats:
+        _city_idxs = [cities_locations.index(c) for c in _vs.cities if c in cities_locations]
+        _vehicles_for_llm.append({
+            "vehicle_id": _vs.vehicle_id,
+            "cities": _city_idxs,
+            "distance": round(_vs.distance, 2),
+            "weight_kg": round(_vs.weight, 2),
+            "volume_m3": round(_vs.volume, 4),
+            "depot_returns": _vs.depot_returns,
+        })
+
 st.session_state["last_route_data"] = {
     "cities": list(cities_locations),
     "sequence": list(best_solution_report),
     "total_distance": best_fitness_report,
     "num_cities": len(cities_locations),
     "priorities": _priorities_for_llm,
+    "demands": _demands_for_llm,
+    "num_vehicles": _num_vehicles,
+    "capacity_weight_kg": _vehicle_capacity_weight,
+    "capacity_volume_m3": _vehicle_capacity_volume,
+    "vehicles": _vehicles_for_llm,
 }
 
 report_text = generate_report()
