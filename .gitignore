@@ -1,1 +1,37 @@
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment / secrets
+.env
+
+# Reports (generated at runtime)
+reports/
+
+# Pytest
+.pytest_cache/
+
+# Data files (generated at runtime)
+cities_locations.txt
+cities_asynmetric_cost_matrix.txt
+cities_demand.csv
+/.venvScriptsactivate
 /.venv

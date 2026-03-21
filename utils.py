@@ -1,11 +1,21 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
-from typing import List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 import os
 
 TimeLike = Union[datetime, int, float, str]
+
+
+@dataclass
+class VehicleStats:
+    vehicle_id: int
+    cities: List[Tuple[float, float]]
+    distance: float
+    weight: float
+    volume: float
+    depot_returns: int
 
 
 @dataclass
@@ -20,6 +30,10 @@ class ReportData:
     random_population_percent: float
     initial_population_method: str
     output_path: Optional[str] = None
+    num_vehicles: int = 1
+    capacity_weight: Optional[float] = None
+    capacity_volume: Optional[float] = None
+    vehicle_stats: List[VehicleStats] = field(default_factory=list)
 
 
 _REPORT_DATA: Optional[ReportData] = None
@@ -87,6 +101,39 @@ def generate_report() -> str:
         f"Percentual populacao random: {_REPORT_DATA.random_population_percent:.2f}",
         f"Populacao inicial: {_REPORT_DATA.initial_population_method}",
     ]
+
+    if _REPORT_DATA.num_vehicles > 1 or _REPORT_DATA.vehicle_stats:
+        report_lines.append("")
+        report_lines.append("--- Frota VRP ---")
+        report_lines.append(f"Veiculos configurados: {_REPORT_DATA.num_vehicles}")
+        cap_w = _REPORT_DATA.capacity_weight
+        cap_v = _REPORT_DATA.capacity_volume
+        report_lines.append(f"Capacidade peso: {f'{cap_w:.1f} kg' if cap_w is not None else 'desativada'}")
+        report_lines.append(f"Capacidade volume: {f'{cap_v:.2f} m3' if cap_v is not None else 'desativada'}")
+
+        if _REPORT_DATA.vehicle_stats:
+            active = [vs for vs in _REPORT_DATA.vehicle_stats if vs.cities]
+            idle = _REPORT_DATA.num_vehicles - len(active)
+            total_weight = sum(vs.weight for vs in active)
+            total_dist = sum(vs.distance for vs in active)
+
+            report_lines.append(f"Veiculos ativos: {len(active)}")
+            if idle > 0:
+                report_lines.append(f"Veiculos ociosos: {idle}")
+            if active:
+                avg_weight = total_weight / len(active)
+                avg_dist = total_dist / len(active)
+                report_lines.append(f"Carga media por veiculo: {avg_weight:.2f} kg")
+                report_lines.append(f"Distancia media por veiculo: {avg_dist:.2f}")
+
+            report_lines.append("")
+            for vs in _REPORT_DATA.vehicle_stats:
+                report_lines.append(f"  Veiculo {vs.vehicle_id}:")
+                report_lines.append(f"    Cidades: {len(vs.cities)}")
+                report_lines.append(f"    Distancia: {vs.distance:.2f}")
+                report_lines.append(f"    Peso: {vs.weight:.2f} kg")
+                report_lines.append(f"    Volume: {vs.volume:.4f} m3")
+                report_lines.append(f"    Retornos ao deposito: {vs.depot_returns}")
 
     report_text = "\n".join(report_lines)
 

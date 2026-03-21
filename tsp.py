@@ -1,11 +1,13 @@
 import random
+import csv
+import io
 import os
 from pathlib import Path
 from dotenv import load_dotenv
 from genetic_algorithm import *
 from demo_tournament import tournament_selection
 from draw_functions import draw_plot, build_solution_figure
-from utils import ReportData, set_report_data, generate_report
+from utils import ReportData, VehicleStats, set_report_data, generate_report
 from priority_utils import parse_city_priority_csv, build_city_priority_csv
 from llm_service import LLMService
 from pdf_service import create_pdf_report
@@ -241,6 +243,14 @@ _config_defaults = {
     "MUTATION_PROBABILITY_MAX": _parse_float(os.getenv("MUTATION_PROBABILITY_MAX")),
     "MUTATION_PROBABILITY_STEP": _parse_float(os.getenv("MUTATION_PROBABILITY_STEP")),
     "JUST_SWAP": _parse_bool(os.getenv("JUST_SWAP")),
+    "NUM_VEHICLES": _parse_int(os.getenv("NUM_VEHICLES"), default=1),
+    "VEHICLE_CAPACITY_WEIGHT_KG": _parse_float(os.getenv("VEHICLE_CAPACITY_WEIGHT_KG")),
+    "VEHICLE_CAPACITY_VOLUME_M3": _parse_float(os.getenv("VEHICLE_CAPACITY_VOLUME_M3")),
+    "DEMAND_WEIGHT_MIN": _parse_float(os.getenv("DEMAND_WEIGHT_MIN"), default=1.0),
+    "DEMAND_WEIGHT_MAX": _parse_float(os.getenv("DEMAND_WEIGHT_MAX"), default=50.0),
+    "DEMAND_VOLUME_MIN": _parse_float(os.getenv("DEMAND_VOLUME_MIN"), default=0.01),
+    "DEMAND_VOLUME_MAX": _parse_float(os.getenv("DEMAND_VOLUME_MAX"), default=2.0),
+    "CITIES_DEMAND_FILE": _parse_str(os.getenv("CITIES_DEMAND_FILE"), default="cities_demand.csv"),
 }
 
 _config_order = [
@@ -270,6 +280,17 @@ _config_order = [
     "MUTATION_PROBABILITY_MAX",
     "MUTATION_PROBABILITY_STEP",
     "JUST_SWAP",
+    "CITIES_DEMAND_FILE",
+]
+
+_vrp_config_keys = [
+    "NUM_VEHICLES",
+    "VEHICLE_CAPACITY_WEIGHT_KG",
+    "VEHICLE_CAPACITY_VOLUME_M3",
+    "DEMAND_WEIGHT_MIN",
+    "DEMAND_WEIGHT_MAX",
+    "DEMAND_VOLUME_MIN",
+    "DEMAND_VOLUME_MAX",
 ]
 
 DELIVERY_PRIORITIES = [
@@ -354,6 +375,66 @@ def load_asymmetric_cost_matrix(path, expected_size):
     except FileNotFoundError:
         return None
 
+def _generate_city_demands(cities_locs, city_prios, prio_rules, cfg):
+    """Generate random demand (weight/volume) per city, modulated by priority.
+
+    Higher-priority items (higher weight_multiplier) produce lighter/smaller
+    packages, matching the PRD requirement that critical meds are lighter.
+    """
+    w_min = cfg["DEMAND_WEIGHT_MIN"]
+    w_max = cfg["DEMAND_WEIGHT_MAX"]
+    v_min = cfg["DEMAND_VOLUME_MIN"]
+    v_max = cfg["DEMAND_VOLUME_MAX"]
+    w_range = w_max - w_min
+    v_range = v_max - v_min
+
+    demands = []
+    for i in range(len(cities_locs)):
+        prio_id = city_prios[i] if i < len(city_prios) else None
+        rule = prio_rules.get(prio_id, {}) if prio_id and prio_rules else {}
+
+        wm = float(rule.get("weight_multiplier", 1.0)) if rule else 1.0
+        fraction = min(1.0, max(0.2, 1.0 / wm))
+
+        eff_w_max = w_min + fraction * w_range
+        eff_v_max = v_min + fraction * v_range
+
+        weight = round(random.uniform(w_min, eff_w_max), 2)
+        volume = round(random.uniform(v_min, eff_v_max), 4)
+        demands.append({"weight": weight, "volume": volume})
+    return demands
+
+
+def _save_demands_csv(filepath, cities_locs, city_prios, demands):
+    """Persist city demand data to CSV for reproducibility."""
+    with open(filepath, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["index", "x", "y", "priority", "weight_kg", "volume_m3"])
+        for i, city in enumerate(cities_locs):
+            prio = city_prios[i] if i < len(city_prios) else ""
+            d = demands[i] if i < len(demands) else {"weight": 0, "volume": 0}
+            writer.writerow([i, city[0], city[1], prio, d["weight"], d["volume"]])
+
+
+def _load_demands_csv(filepath, expected_count):
+    """Load demand data from CSV. Returns list of dicts or None on failure."""
+    if not os.path.exists(filepath):
+        return None
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            demands = []
+            for row in reader:
+                weight = float(row.get("weight_kg", 0))
+                volume = float(row.get("volume_m3", 0))
+                demands.append({"weight": round(weight, 2), "volume": round(volume, 4)})
+            if len(demands) != expected_count:
+                return None
+            return demands
+    except (FileNotFoundError, ValueError, KeyError):
+        return None
+
+
 _gerar_cidades = _config["GERAR_CIDADES"]
 _number_of_cities = _config["NUMBER_OF_CITIES"]
 _max_generation_allowed = _config["MAX_GENERATION_ALLOWED"]
@@ -385,6 +466,15 @@ _stagnation_generations = _config["STAGNATION_GENERATIONS"]
 _mutation_probability_max = _config["MUTATION_PROBABILITY_MAX"]
 _mutation_probability_step = _config["MUTATION_PROBABILITY_STEP"]
 _just_swap = _config["JUST_SWAP"]
+
+_num_vehicles = _config["NUM_VEHICLES"]
+_vehicle_capacity_weight = _config["VEHICLE_CAPACITY_WEIGHT_KG"]
+_vehicle_capacity_volume = _config["VEHICLE_CAPACITY_VOLUME_M3"]
+_demand_weight_min = _config["DEMAND_WEIGHT_MIN"]
+_demand_weight_max = _config["DEMAND_WEIGHT_MAX"]
+_demand_volume_min = _config["DEMAND_VOLUME_MIN"]
+_demand_volume_max = _config["DEMAND_VOLUME_MAX"]
+_cities_demand_file = _config["CITIES_DEMAND_FILE"]
 
 # 1. Guardar hora de inicio
 hora_inicio = datetime.now()
@@ -461,6 +551,26 @@ if _car_autonomy is not None:
 else:
     clear_car_autonomy()
 
+if _gerar_cidades:
+    _city_demands = _generate_city_demands(
+        cities_locations, _city_priorities, _priority_rules, _config,
+    )
+    _save_demands_csv(_cities_demand_file, cities_locations, _city_priorities, _city_demands)
+else:
+    _city_demands = _load_demands_csv(_cities_demand_file, len(cities_locations))
+    if _city_demands is None:
+        _city_demands = _generate_city_demands(
+            cities_locations, _city_priorities, _priority_rules, _config,
+        )
+        _save_demands_csv(_cities_demand_file, cities_locations, _city_priorities, _city_demands)
+
+set_city_demands(cities_locations, _city_demands)
+set_vehicle_params(
+    num_vehicles=_num_vehicles,
+    capacity_weight=_vehicle_capacity_weight,
+    capacity_volume=_vehicle_capacity_volume,
+    depot=cities_locations[0] if cities_locations else None,
+)
 
 # Criação da população inicial, pode ser totalmente randomica ou um pouco randomico e o restante para chegar 
 # em 100% pode ser: NEAREST_NEIGHBOURS, GREEDY_APPROACH ou CONVEX_HULL 
@@ -518,13 +628,130 @@ with st.sidebar:
         st.write("Cidade de referencia: N/A")
     else:
         st.write(f"Cidade de referencia: {ref_city}")
+
+    st.divider()
+    st.subheader("VRP / Capacidade")
+    st.write(f"Veiculos: **{_num_vehicles}**")
+    if _vehicle_capacity_weight is not None:
+        st.write(f"Peso max: **{_vehicle_capacity_weight:.1f} kg**")
+    else:
+        st.write("Peso max: **desativado**")
+    if _vehicle_capacity_volume is not None:
+        st.write(f"Volume max: **{_vehicle_capacity_volume:.2f} m3**")
+    else:
+        st.write("Volume max: **desativado**")
+    st.caption("Edite na aba Configuracoes.")
+
+    st.divider()
     if "run_ga" not in st.session_state:
         st.session_state.run_ga = False
     if st.button("Play", type="primary"):
         st.session_state.run_ga = True
 
 with settings_tab:
-    st.subheader("Configuracoes do .env")
+    # --- VRP / Frota ---
+    st.subheader("VRP / Frota e Capacidade")
+    st.caption("Configure veiculos e capacidade de carga. Clique Aplicar VRP para recarregar.")
+    _vrp_edited = {}
+    with st.form("vrp_config_form"):
+        vrp_c1, vrp_c2, vrp_c3 = st.columns(3)
+        with vrp_c1:
+            _vrp_edited["NUM_VEHICLES"] = st.number_input(
+                "Numero de veiculos",
+                min_value=1,
+                max_value=20,
+                value=int(_num_vehicles),
+                step=1,
+                key="vrp_num_vehicles",
+            )
+        with vrp_c2:
+            _cap_w_disabled = st.checkbox(
+                "Desativar limite de peso",
+                value=(_vehicle_capacity_weight is None),
+                key="vrp_cap_weight_off",
+            )
+            if _cap_w_disabled:
+                _vrp_edited["VEHICLE_CAPACITY_WEIGHT_KG"] = None
+                st.number_input(
+                    "Capacidade peso (kg)",
+                    min_value=1.0,
+                    value=500.0,
+                    step=10.0,
+                    disabled=True,
+                    key="vrp_cap_weight_disabled",
+                )
+            else:
+                _vrp_edited["VEHICLE_CAPACITY_WEIGHT_KG"] = st.number_input(
+                    "Capacidade peso (kg)",
+                    min_value=1.0,
+                    value=float(_vehicle_capacity_weight or 500.0),
+                    step=10.0,
+                    key="vrp_cap_weight",
+                )
+        with vrp_c3:
+            _cap_v_disabled = st.checkbox(
+                "Desativar limite de volume",
+                value=(_vehicle_capacity_volume is None),
+                key="vrp_cap_vol_off",
+            )
+            if _cap_v_disabled:
+                _vrp_edited["VEHICLE_CAPACITY_VOLUME_M3"] = None
+                st.number_input(
+                    "Capacidade volume (m3)",
+                    min_value=0.01,
+                    value=10.0,
+                    step=0.5,
+                    disabled=True,
+                    key="vrp_cap_vol_disabled",
+                )
+            else:
+                _vrp_edited["VEHICLE_CAPACITY_VOLUME_M3"] = st.number_input(
+                    "Capacidade volume (m3)",
+                    min_value=0.01,
+                    value=float(_vehicle_capacity_volume or 10.0),
+                    step=0.5,
+                    key="vrp_cap_vol",
+                )
+
+        st.markdown("**Faixas de demanda por cidade**")
+        dem_c1, dem_c2, dem_c3, dem_c4 = st.columns(4)
+        with dem_c1:
+            _vrp_edited["DEMAND_WEIGHT_MIN"] = st.number_input(
+                "Peso min (kg)", min_value=0.0,
+                value=float(_config.get("DEMAND_WEIGHT_MIN", 1.0)),
+                step=1.0, key="vrp_dw_min",
+            )
+        with dem_c2:
+            _vrp_edited["DEMAND_WEIGHT_MAX"] = st.number_input(
+                "Peso max (kg)", min_value=0.1,
+                value=float(_config.get("DEMAND_WEIGHT_MAX", 50.0)),
+                step=5.0, key="vrp_dw_max",
+            )
+        with dem_c3:
+            _vrp_edited["DEMAND_VOLUME_MIN"] = st.number_input(
+                "Volume min (m3)", min_value=0.0,
+                value=float(_config.get("DEMAND_VOLUME_MIN", 0.01)),
+                step=0.01, format="%.2f", key="vrp_dv_min",
+            )
+        with dem_c4:
+            _vrp_edited["DEMAND_VOLUME_MAX"] = st.number_input(
+                "Volume max (m3)", min_value=0.01,
+                value=float(_config.get("DEMAND_VOLUME_MAX", 2.0)),
+                step=0.5, key="vrp_dv_max",
+            )
+
+        vrp_submitted = st.form_submit_button("Aplicar VRP")
+    if vrp_submitted:
+        overrides = st.session_state.get("config_overrides", dict(_config))
+        for k, v in _vrp_edited.items():
+            overrides[k] = v
+        st.session_state.config_overrides = overrides
+        _safe_rerun()
+
+    st.divider()
+
+    # --- Parametros gerais ---
+    st.subheader("Parametros gerais")
     st.caption("Edite os valores e clique em Aplicar para recarregar.")
     edited_values = {}
     with st.form("env_config_form"):
@@ -541,7 +768,7 @@ with settings_tab:
                     edited_values[key] = st.text_input(key, value=display_value)
         submitted = st.form_submit_button("Aplicar configuracoes")
     if submitted:
-        overrides = {}
+        overrides = st.session_state.get("config_overrides", dict(_config))
         for key, value in edited_values.items():
             overrides[key] = _coerce_config_value(value, _config_defaults.get(key))
         st.session_state.config_overrides = overrides
@@ -710,15 +937,42 @@ with priorities_tab:
         ]
         st.table(summary_rows)
 
-        city_rows = [
-            {
+        st.divider()
+        st.subheader("Demandas por cidade")
+
+        _total_demand_weight = sum(
+            (d.get("weight", 0) if d else 0) for d in _city_demands
+        )
+        _total_demand_volume = sum(
+            (d.get("volume", 0) if d else 0) for d in _city_demands
+        )
+        dem_cols = st.columns(4)
+        dem_cols[0].metric("Peso total", f"{_total_demand_weight:.2f} kg")
+        dem_cols[1].metric("Volume total", f"{_total_demand_volume:.4f} m3")
+        if _vehicle_capacity_weight is not None and _num_vehicles > 0:
+            fleet_cap_w = _vehicle_capacity_weight * _num_vehicles
+            pct_w = (_total_demand_weight / fleet_cap_w * 100) if fleet_cap_w > 0 else 0
+            dem_cols[2].metric("Cap. peso frota", f"{fleet_cap_w:.1f} kg", f"{pct_w:.0f}% usado")
+        else:
+            dem_cols[2].metric("Cap. peso frota", "ilimitada")
+        if _vehicle_capacity_volume is not None and _num_vehicles > 0:
+            fleet_cap_v = _vehicle_capacity_volume * _num_vehicles
+            pct_v = (_total_demand_volume / fleet_cap_v * 100) if fleet_cap_v > 0 else 0
+            dem_cols[3].metric("Cap. volume frota", f"{fleet_cap_v:.2f} m3", f"{pct_v:.0f}% usado")
+        else:
+            dem_cols[3].metric("Cap. volume frota", "ilimitada")
+
+        city_rows = []
+        for index, city in enumerate(cities_locations):
+            demand = _city_demands[index] if index < len(_city_demands) else {}
+            city_rows.append({
                 "Cidade": index,
                 "X": city[0],
                 "Y": city[1],
                 "Prioridade": _city_priorities[index],
-            }
-            for index, city in enumerate(cities_locations)
-        ]
+                "Peso (kg)": demand.get("weight", 0),
+                "Volume (m3)": demand.get("volume", 0),
+            })
         st.dataframe(city_rows, use_container_width=True, hide_index=True)
 
     st.markdown("</div>", unsafe_allow_html=True)
@@ -944,17 +1198,30 @@ for generation in range(1, _max_generation_allowed + 1):
         fitness_placeholder.pyplot(fitness_fig, width="stretch")
         plt.close(fitness_fig)
 
-        candidate_path = population[1] if len(population) > 1 else None
-        solution_fig = build_solution_figure(
-            cities_locations,
-            best_solution,
-            candidate_path=candidate_path,
-            node_radius=_node_radius,
-            reference_city=cities_locations[0] if cities_locations else None,
-            width=_width,
-            height=_height,
-            x_offset=_plot_x_offset,
-        )
+        _vrp_active = _num_vehicles > 1 or _vehicle_capacity_weight is not None or _vehicle_capacity_volume is not None
+        if _vrp_active:
+            _best_routes = evaluate_vrp_routes(best_solution)
+            solution_fig = build_solution_figure(
+                cities_locations,
+                routes=_best_routes,
+                node_radius=_node_radius,
+                reference_city=cities_locations[0] if cities_locations else None,
+                width=_width,
+                height=_height,
+                x_offset=_plot_x_offset,
+            )
+        else:
+            candidate_path = population[1] if len(population) > 1 else None
+            solution_fig = build_solution_figure(
+                cities_locations,
+                best_path=best_solution,
+                candidate_path=candidate_path,
+                node_radius=_node_radius,
+                reference_city=cities_locations[0] if cities_locations else None,
+                width=_width,
+                height=_height,
+                x_offset=_plot_x_offset,
+            )
         map_placeholder.pyplot(solution_fig, width="stretch")
         plt.close(solution_fig)
 
@@ -974,6 +1241,32 @@ else:
     best_generation_report = 0
     best_fitness_report = 0.0
 
+_vrp_active_report = _num_vehicles > 1 or _vehicle_capacity_weight is not None or _vehicle_capacity_volume is not None
+_report_vehicle_stats: list = []
+if _vrp_active_report and best_solution_report:
+    _final_routes = evaluate_vrp_routes(best_solution_report)
+    _depot = cities_locations[0] if cities_locations else None
+    for idx, route in enumerate(_final_routes):
+        cities_in_route = [c for c in route if c != _depot] if _depot else route
+        route_weight = sum(
+            (get_city_demand(c) or {}).get("weight", 0) for c in cities_in_route
+        )
+        route_volume = sum(
+            (get_city_demand(c) or {}).get("volume", 0) for c in cities_in_route
+        )
+        route_dist = 0.0
+        for i in range(len(route) - 1):
+            route_dist += calculate_distance(route[i], route[i + 1])
+        depot_returns = max(0, sum(1 for c in route if c == _depot) - 1) if _depot else 0
+        _report_vehicle_stats.append(VehicleStats(
+            vehicle_id=idx + 1,
+            cities=cities_in_route,
+            distance=route_dist,
+            weight=route_weight,
+            volume=route_volume,
+            depot_returns=depot_returns,
+        ))
+
 set_report_data(ReportData(
     num_cities=len(cities_locations),
     start_time=hora_inicio,
@@ -985,6 +1278,10 @@ set_report_data(ReportData(
     random_population_percent=_random_population_percent,
     initial_population_method=initial_population_method,
     output_path=report_output_path,
+    num_vehicles=_num_vehicles,
+    capacity_weight=_vehicle_capacity_weight,
+    capacity_volume=_vehicle_capacity_volume,
+    vehicle_stats=_report_vehicle_stats,
 ))
 
 _priorities_for_llm = {}
@@ -992,12 +1289,35 @@ for _i, _pid in enumerate(_city_priorities):
     _rule = _priority_rules.get(_pid, {})
     _priorities_for_llm[_i] = f"{_pid} ({_rule.get('label', _pid)})"
 
+_demands_for_llm = {}
+for _i, _city in enumerate(cities_locations):
+    _d = _city_demands[_i] if _i < len(_city_demands) else {}
+    _demands_for_llm[_i] = {"weight_kg": _d.get("weight", 0), "volume_m3": _d.get("volume", 0)}
+
+_vehicles_for_llm = []
+if _vrp_active_report and _report_vehicle_stats:
+    for _vs in _report_vehicle_stats:
+        _city_idxs = [cities_locations.index(c) for c in _vs.cities if c in cities_locations]
+        _vehicles_for_llm.append({
+            "vehicle_id": _vs.vehicle_id,
+            "cities": _city_idxs,
+            "distance": round(_vs.distance, 2),
+            "weight_kg": round(_vs.weight, 2),
+            "volume_m3": round(_vs.volume, 4),
+            "depot_returns": _vs.depot_returns,
+        })
+
 st.session_state["last_route_data"] = {
     "cities": list(cities_locations),
     "sequence": list(best_solution_report),
     "total_distance": best_fitness_report,
     "num_cities": len(cities_locations),
     "priorities": _priorities_for_llm,
+    "demands": _demands_for_llm,
+    "num_vehicles": _num_vehicles,
+    "capacity_weight_kg": _vehicle_capacity_weight,
+    "capacity_volume_m3": _vehicle_capacity_volume,
+    "vehicles": _vehicles_for_llm,
 }
 
 report_text = generate_report()

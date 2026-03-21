@@ -19,13 +19,7 @@ Entregas técnicas para PROJETO 2 (Otimização de Rotas Médicas):
     Os(as) alunos(as) deverão modificar esse código para incorporar as restrições adicionais e
     torná-lo mais realista para o contexto hospitalar.
 
-2. Integração com LLMs para Geração de Instruções e Relatórios
-  ● Utilizar uma LLM pré-treinada para:
-    ○ Gerar instruções detalhadas para motoristas e equipes de entrega com base nas rotas otimizadas;
-    ○ Criar relatórios diários/semanais sobre eficiência de rotas, economia de tempo e recursos;
-    ○ Sugerir melhorias no processo com base nos padrões identificados.
-  ● Implementar prompts eficientes para extrair informações úteis da LLM;
-  ● Permitir que o sistema responda a perguntas em linguagem natural sobre as rotas e entregas.
+
 
 3. Código e Organização (para ambos os projetos)
   ● Projeto Python bem estruturado, utilizando ambiente virtual (Poetry, Pipenv ou venv);

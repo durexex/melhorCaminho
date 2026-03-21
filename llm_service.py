@@ -18,8 +18,10 @@ Regras:
 - Refira-se aos pontos como "Ponto 0", "Ponto 1", etc., seguido das coordenadas (x, y).
 - Indique a ordem de visita conforme a sequência fornecida.
 - Quando disponível, mencione a prioridade de entrega de cada ponto.
+- Quando há múltiplos veículos, gere instruções separadas para cada veículo, indicando \
+  sua carga total (peso e volume) e as cidades atribuídas.
 - Não invente nomes de ruas ou locais que não constem nos dados.
-- Ao final, inclua a distância total da rota.
+- Ao final, inclua a distância total da rota (por veículo e geral).
 """
 
 _NAVIGATION_USER_TEMPLATE = """\
@@ -29,7 +31,8 @@ Dados da rota:
 - Sequência de visita (índices): {sequence}
 - Coordenadas das cidades: {cities}
 - Prioridades: {priorities}
-
+- Demandas por cidade (peso/volume): {demands}
+{vrp_section}
 Gere as instruções de navegação passo a passo."""
 
 _EFFICIENCY_SYSTEM_PROMPT = """\
@@ -55,7 +58,8 @@ Dados da rota:
 - Sequência de visita (índices): {sequence}
 - Coordenadas das cidades: {cities}
 - Prioridades: {priorities}
-
+- Demandas por cidade (peso/volume): {demands}
+{vrp_section}
 Gere o relatório de eficiência."""
 
 _CHAT_SYSTEM_PROMPT = """\
@@ -70,17 +74,44 @@ Dados da rota atual:
 - Sequência de visita (índices): {sequence}
 - Coordenadas das cidades: {cities}
 - Prioridades: {priorities}
+- Demandas por cidade (peso/volume): {demands}
+{vrp_section}
 """
 
 
 def _format_route_data(route_data: dict) -> dict:
     """Normaliza route_data para preenchimento dos templates."""
+    vehicles = route_data.get("vehicles", [])
+    num_vehicles = route_data.get("num_vehicles", 1)
+    cap_w = route_data.get("capacity_weight_kg")
+    cap_v = route_data.get("capacity_volume_m3")
+
+    vrp_lines: list[str] = []
+    if num_vehicles > 1 or vehicles:
+        vrp_lines.append(f"- Numero de veiculos configurados: {num_vehicles}")
+        if cap_w is not None:
+            vrp_lines.append(f"- Capacidade de peso por veiculo: {cap_w:.1f} kg")
+        if cap_v is not None:
+            vrp_lines.append(f"- Capacidade de volume por veiculo: {cap_v:.2f} m3")
+        if vehicles:
+            vrp_lines.append(f"- Veiculos ativos: {len(vehicles)}")
+            for v in vehicles:
+                vrp_lines.append(
+                    f"  Veiculo {v['vehicle_id']}: cidades={v['cities']}, "
+                    f"distancia={v['distance']}, peso={v['weight_kg']} kg, "
+                    f"volume={v['volume_m3']} m3, retornos_deposito={v['depot_returns']}"
+                )
+
+    vrp_section = "\n".join(vrp_lines) if vrp_lines else ""
+
     return {
         "num_cities": route_data.get("num_cities", len(route_data.get("cities", []))),
         "total_distance": route_data.get("total_distance", 0.0),
         "sequence": route_data.get("sequence", []),
         "cities": route_data.get("cities", []),
         "priorities": route_data.get("priorities", "N/A"),
+        "demands": route_data.get("demands", "N/A"),
+        "vrp_section": vrp_section,
     }
 
 
