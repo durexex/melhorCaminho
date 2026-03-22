@@ -9,7 +9,11 @@ SAMPLE_ROUTE_DATA = {
     "sequence": [0, 2, 1],
     "total_distance": 565.68,
     "num_cities": 3,
-    "priorities": {"0": "critical_meds", "1": "regular_supplies", "2": "critical_meds"},
+    "priorities": {
+        "0": "emergencia_obstetrica",
+        "1": "medicamentos_hormonais",
+        "2": "atendimento_pos_parto",
+    },
 }
 
 

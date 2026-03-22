@@ -6,7 +6,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from genetic_algorithm import *
 from demo_tournament import tournament_selection
-from draw_functions import draw_plot, build_solution_figure
+from draw_functions import draw_plot, build_solution_figure, build_priority_legend_items
 from utils import ReportData, VehicleStats, set_report_data, generate_report
 from priority_utils import parse_city_priority_csv, build_city_priority_csv
 from llm_service import LLMService
@@ -118,6 +118,28 @@ div[data-testid="stTabs"] button[aria-selected="true"] {
   font-size: 0.85rem;
   margin-bottom: 6px;
 }
+.priority-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 6px 0 14px 0;
+}
+.priority-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.9rem;
+}
+.priority-legend-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  display: inline-block;
+}
 div[data-testid="stTextInput"] input,
 div[data-testid="stNumberInput"] input,
 div[data-testid="stTextArea"] textarea {
@@ -203,8 +225,111 @@ def _build_priority_rules(priority_definitions):
             "weight_multiplier": _parse_float(item.get("weight_multiplier"), default=1.0),
             "penalty_per_km": _parse_float(item.get("penalty_per_km"), default=1.0),
             "max_delay_min": _parse_int(item.get("max_delay_min"), default=0),
+            "latest_position": _parse_int(item.get("latest_position"), default=None),
+            "service_time_min": _parse_float(item.get("service_time_min"), default=0.0),
+            "time_window_start_min": _parse_float(item.get("time_window_start_min"), default=None),
+            "time_window_end_min": _parse_float(item.get("time_window_end_min"), default=None),
+            "temperature_penalty_per_km": _parse_float(
+                item.get("temperature_penalty_per_km"), default=0.0
+            ),
+            "sequence_penalty": _parse_float(item.get("sequence_penalty"), default=0.0),
         }
     return rules
+
+
+_PRIORITY_RULE_FIELDS = (
+    "label",
+    "description",
+    "weight_multiplier",
+    "penalty_per_km",
+    "max_delay_min",
+    "latest_position",
+    "service_time_min",
+    "time_window_start_min",
+    "time_window_end_min",
+    "temperature_penalty_per_km",
+    "sequence_penalty",
+)
+
+
+def _normalize_priority_definitions(priority_definitions):
+    incoming = {}
+    for item in priority_definitions or []:
+        priority_id = item.get("id")
+        if priority_id:
+            incoming[priority_id] = item
+
+    normalized = []
+    for default_item in DELIVERY_PRIORITIES:
+        merged = dict(default_item)
+        override = incoming.get(default_item["id"], {})
+        for key in _PRIORITY_RULE_FIELDS:
+            if key in override and override.get(key) not in (None, ""):
+                merged[key] = override[key]
+        normalized.append(merged)
+    return normalized
+
+
+def _format_time_window(rule):
+    start = rule.get("time_window_start_min")
+    end = rule.get("time_window_end_min")
+    if start is None and end is None:
+        return "Sem janela"
+    start_txt = "-" if start is None else f"{int(start)} min"
+    end_txt = "-" if end is None else f"{int(end)} min"
+    return f"{start_txt} -> {end_txt}"
+
+
+def _format_priority_service_hint(rule):
+    parts = [f"SLA {int(rule.get('max_delay_min', 0))} min"]
+
+    latest_position = rule.get("latest_position")
+    if latest_position:
+        parts.append(f"ate parada {int(latest_position)}")
+
+    service_time = rule.get("service_time_min")
+    if service_time:
+        parts.append(f"protocolo {int(service_time)} min")
+
+    if rule.get("temperature_penalty_per_km"):
+        parts.append("cadeia fria")
+
+    if rule.get("time_window_start_min") is not None or rule.get("time_window_end_min") is not None:
+        parts.append(_format_time_window(rule))
+
+    return " | ".join(parts)
+
+
+def _render_priority_legend(priority_ids, priority_rules):
+    if not priority_ids:
+        return
+
+    legend_items = build_priority_legend_items(
+        priority_ids,
+        priority_labels={pid: priority_rules[pid]["label"] for pid in priority_ids if pid in priority_rules},
+    )
+
+    chips = []
+    for item in legend_items:
+        r, g, b = item["color"]
+        chips.append(
+            (
+                "<span class=\"priority-legend-item\">"
+                f"<span class=\"priority-legend-swatch\" style=\"background: rgb({r}, {g}, {b});\"></span>"
+                f"{item['label']}"
+                "</span>"
+            )
+        )
+
+    chips.append(
+        "<span class=\"priority-legend-item\"><strong>X</strong> Cidade inicial</span>"
+    )
+
+    st.markdown("**Legenda de prioridades**", unsafe_allow_html=True)
+    st.markdown(
+        f"<div class=\"priority-legend\">{''.join(chips)}</div>",
+        unsafe_allow_html=True,
+    )
 
 
 
@@ -295,24 +420,66 @@ _vrp_config_keys = [
 
 DELIVERY_PRIORITIES = [
     {
-        "id": "critical_meds",
-        "label": "Medicamentos criticos",
-        "description": "Urgencia alta, penalidade maior por atrasos.",
-        "weight_multiplier": 2.0,
-        "penalty_per_km": 1.5,
-        "max_delay_min": 30,
+        "id": "emergencia_obstetrica",
+        "label": "Emergencias obstetricas",
+        "description": "Prioridade maxima. Deve ser atendida no inicio da rota e com o menor atraso possivel.",
+        "weight_multiplier": 3.8,
+        "penalty_per_km": 3.0,
+        "max_delay_min": 20,
+        "latest_position": 2,
+        "service_time_min": 8.0,
+        "time_window_start_min": None,
+        "time_window_end_min": None,
+        "temperature_penalty_per_km": 0.0,
+        "sequence_penalty": 140.0,
     },
     {
-        "id": "regular_supplies",
-        "label": "Insumos regulares",
-        "description": "Urgencia normal, penalidade padrao.",
-        "weight_multiplier": 1.0,
-        "penalty_per_km": 1.0,
-        "max_delay_min": 240,
+        "id": "violencia_domestica",
+        "label": "Casos de violencia domestica",
+        "description": "Protocolos especiais. O algoritmo antecipa a visita e reserva mais tempo operacional por atendimento.",
+        "weight_multiplier": 3.2,
+        "penalty_per_km": 2.6,
+        "max_delay_min": 35,
+        "latest_position": 4,
+        "service_time_min": 20.0,
+        "time_window_start_min": None,
+        "time_window_end_min": None,
+        "temperature_penalty_per_km": 0.0,
+        "sequence_penalty": 110.0,
+    },
+    {
+        "id": "medicamentos_hormonais",
+        "label": "Medicamentos hormonais",
+        "description": "Carga com temperatura controlada. Penaliza trajetos longos ate a entrega para preservar cadeia fria.",
+        "weight_multiplier": 2.6,
+        "penalty_per_km": 2.2,
+        "max_delay_min": 60,
+        "latest_position": 6,
+        "service_time_min": 10.0,
+        "time_window_start_min": None,
+        "time_window_end_min": None,
+        "temperature_penalty_per_km": 3.5,
+        "sequence_penalty": 75.0,
+    },
+    {
+        "id": "atendimento_pos_parto",
+        "label": "Atendimento pos-parto",
+        "description": "Janela de atendimento especifica. A rota procura encaixar a visita dentro da faixa operacional planejada.",
+        "weight_multiplier": 2.0,
+        "penalty_per_km": 1.8,
+        "max_delay_min": 120,
+        "latest_position": 8,
+        "service_time_min": 15.0,
+        "time_window_start_min": 45.0,
+        "time_window_end_min": 120.0,
+        "temperature_penalty_per_km": 0.0,
+        "sequence_penalty": 55.0,
     },
 ]
 
-_priority_definitions = st.session_state.get("priority_overrides", DELIVERY_PRIORITIES)
+_priority_definitions = _normalize_priority_definitions(
+    st.session_state.get("priority_overrides", DELIVERY_PRIORITIES)
+)
 _priority_rules = _build_priority_rules(_priority_definitions)
 _priority_ids = list(_priority_rules.keys())
 _default_priority_id = _priority_ids[0] if _priority_ids else None
@@ -612,6 +779,7 @@ map_tab, heatmap_tab, settings_tab, priorities_tab, ai_tab = st.tabs(
 
 with map_tab:
     status_placeholder = st.empty()
+    _render_priority_legend(_priority_ids, _priority_rules)
     plot_col, map_col = st.columns([1, 2])
     fitness_placeholder = plot_col.empty()
     map_placeholder = map_col.empty()
@@ -777,7 +945,10 @@ with settings_tab:
 with priorities_tab:
     st.markdown("<div class=\"priorities-wrap\">", unsafe_allow_html=True)
     st.subheader("Prioridades de entrega")
-    st.caption("Edite as prioridades e aplique para atualizar a funcao fitness.")
+    st.caption(
+        "Catalogo clinico com 4 classes fixas. A fitness agora considera urgencia, ordem de atendimento, "
+        "SLA maximo, janela de tempo e penalidade de cadeia fria."
+    )
     if not _priority_ids:
         st.warning("Nenhuma prioridade configurada.")
     else:
@@ -825,6 +996,68 @@ with priorities_tab:
                         key=f"priority_delay_{priority_id}",
                         label_visibility="collapsed",
                     )
+                order_col, service_col, temp_col, seq_col = st.columns(4)
+                with order_col:
+                    st.markdown("<div class=\"priority-label\">Ultima parada</div>", unsafe_allow_html=True)
+                    latest_position = st.number_input(
+                        "Ultima parada",
+                        value=int(item.get("latest_position") or 0),
+                        min_value=0,
+                        step=1,
+                        key=f"priority_latest_position_{priority_id}",
+                        label_visibility="collapsed",
+                    )
+                with service_col:
+                    st.markdown("<div class=\"priority-label\">Tempo protocolo (min)</div>", unsafe_allow_html=True)
+                    service_time_min = st.number_input(
+                        "Tempo protocolo (min)",
+                        value=float(item.get("service_time_min") or 0.0),
+                        min_value=0.0,
+                        step=1.0,
+                        key=f"priority_service_time_{priority_id}",
+                        label_visibility="collapsed",
+                    )
+                with temp_col:
+                    st.markdown("<div class=\"priority-label\">Penalidade cadeia fria</div>", unsafe_allow_html=True)
+                    temperature_penalty_per_km = st.number_input(
+                        "Penalidade cadeia fria",
+                        value=float(item.get("temperature_penalty_per_km") or 0.0),
+                        min_value=0.0,
+                        step=0.1,
+                        key=f"priority_temperature_penalty_{priority_id}",
+                        label_visibility="collapsed",
+                    )
+                with seq_col:
+                    st.markdown("<div class=\"priority-label\">Penalidade por posicao</div>", unsafe_allow_html=True)
+                    sequence_penalty = st.number_input(
+                        "Penalidade por posicao",
+                        value=float(item.get("sequence_penalty") or 0.0),
+                        min_value=0.0,
+                        step=5.0,
+                        key=f"priority_sequence_penalty_{priority_id}",
+                        label_visibility="collapsed",
+                    )
+                window_start_col, window_end_col = st.columns(2)
+                with window_start_col:
+                    st.markdown("<div class=\"priority-label\">Janela inicio (min)</div>", unsafe_allow_html=True)
+                    time_window_start_min = st.number_input(
+                        "Janela inicio (min)",
+                        value=float(item.get("time_window_start_min") or 0.0),
+                        min_value=0.0,
+                        step=5.0,
+                        key=f"priority_window_start_{priority_id}",
+                        label_visibility="collapsed",
+                    )
+                with window_end_col:
+                    st.markdown("<div class=\"priority-label\">Janela fim (min)</div>", unsafe_allow_html=True)
+                    time_window_end_min = st.number_input(
+                        "Janela fim (min)",
+                        value=float(item.get("time_window_end_min") or 0.0),
+                        min_value=0.0,
+                        step=5.0,
+                        key=f"priority_window_end_{priority_id}",
+                        label_visibility="collapsed",
+                    )
                 st.markdown("<div class=\"priority-label\">Descricao</div>", unsafe_allow_html=True)
                 description = st.text_area(
                     "Descricao",
@@ -841,16 +1074,26 @@ with priorities_tab:
                         "weight_multiplier": weight_multiplier,
                         "penalty_per_km": penalty_per_km,
                         "max_delay_min": max_delay_min,
+                        "latest_position": latest_position or None,
+                        "service_time_min": service_time_min,
+                        "time_window_start_min": time_window_start_min or None,
+                        "time_window_end_min": time_window_end_min or None,
+                        "temperature_penalty_per_km": temperature_penalty_per_km,
+                        "sequence_penalty": sequence_penalty,
                     }
                 )
             priorities_submitted = st.form_submit_button("Aplicar prioridades")
         st.markdown("</div>", unsafe_allow_html=True)
         if priorities_submitted:
-            st.session_state.priority_overrides = updated_definitions
+            st.session_state.priority_overrides = _normalize_priority_definitions(updated_definitions)
             _safe_rerun()
 
     st.divider()
     st.subheader("Prioridade por cidade")
+    st.caption(
+        "Associe cada cidade a uma das quatro classes clinicas. Essa classificacao entra diretamente "
+        "na ordem da rota e nas penalidades da fitness."
+    )
     if not cities_locations:
         st.info("Nenhuma cidade carregada.")
     else:
@@ -862,7 +1105,7 @@ with priorities_tab:
         )
         st.caption("Exemplo de CSV:")
         st.code(
-            "index,priority\n0,critical_meds\n1,regular_supplies",
+            "index,priority\n0,emergencia_obstetrica\n1,medicamentos_hormonais\n2,atendimento_pos_parto",
             language="csv",
         )
         if st.button("Aplicar CSV", type="secondary"):
@@ -898,7 +1141,7 @@ with priorities_tab:
                         f"Cidade {index} ({city[0]}, {city[1]})",
                         options=_priority_ids,
                         index=option_index,
-                        format_func=lambda pid: f"{pid} - {_priority_rules[pid]['label']}",
+                        format_func=lambda pid: _priority_rules[pid]["label"],
                         key=f"city_priority_{index}",
                     )
                     updated_city_overrides[index] = selected
@@ -930,8 +1173,9 @@ with priorities_tab:
                 priority_summary[priority_id] += 1
         summary_rows = [
             {
-                "Prioridade": f"{pid} - {_priority_rules[pid]['label']}",
+                "Prioridade": _priority_rules[pid]["label"],
                 "Cidades": count,
+                "Regra operacional": _format_priority_service_hint(_priority_rules[pid]),
             }
             for pid, count in priority_summary.items()
         ]
@@ -969,7 +1213,7 @@ with priorities_tab:
                 "Cidade": index,
                 "X": city[0],
                 "Y": city[1],
-                "Prioridade": _city_priorities[index],
+                "Prioridade": _priority_rules[_city_priorities[index]]["label"],
                 "Peso (kg)": demand.get("weight", 0),
                 "Volume (m3)": demand.get("volume", 0),
             })
@@ -1122,6 +1366,8 @@ if not st.session_state.run_ga:
                     st.session_state["ga_best_solution"],
                     candidate_path=None,
                     node_radius=_node_radius,
+                    city_priority_ids=_city_priorities,
+                    priority_labels={pid: data["label"] for pid, data in _priority_rules.items()},
                     reference_city=cities_locations[0] if cities_locations else None,
                     width=_width,
                     height=_height,
@@ -1205,6 +1451,8 @@ for generation in range(1, _max_generation_allowed + 1):
                 cities_locations,
                 routes=_best_routes,
                 node_radius=_node_radius,
+                city_priority_ids=_city_priorities,
+                priority_labels={pid: data["label"] for pid, data in _priority_rules.items()},
                 reference_city=cities_locations[0] if cities_locations else None,
                 width=_width,
                 height=_height,
@@ -1217,6 +1465,8 @@ for generation in range(1, _max_generation_allowed + 1):
                 best_path=best_solution,
                 candidate_path=candidate_path,
                 node_radius=_node_radius,
+                city_priority_ids=_city_priorities,
+                priority_labels={pid: data["label"] for pid, data in _priority_rules.items()},
                 reference_city=cities_locations[0] if cities_locations else None,
                 width=_width,
                 height=_height,
@@ -1287,7 +1537,9 @@ set_report_data(ReportData(
 _priorities_for_llm = {}
 for _i, _pid in enumerate(_city_priorities):
     _rule = _priority_rules.get(_pid, {})
-    _priorities_for_llm[_i] = f"{_pid} ({_rule.get('label', _pid)})"
+    _priorities_for_llm[_i] = (
+        f"{_pid} ({_rule.get('label', _pid)}) | {_format_priority_service_hint(_rule)}"
+    )
 
 _demands_for_llm = {}
 for _i, _city in enumerate(cities_locations):

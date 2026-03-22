@@ -12,6 +12,7 @@ _INVALID_ROUTE_PENALTY = 1e12
 _CITY_PRIORITY: Optional[dict[Tuple[float, float], str]] = None
 _PRIORITY_RULES: Optional[dict[str, dict]] = None
 _DEFAULT_PRIORITY_ID: Optional[str] = None
+_PRIORITY_REFERENCE_CITY: Optional[Tuple[float, float]] = None
 
 _NUM_VEHICLES: int = 1
 _VEHICLE_CAPACITY_WEIGHT: Optional[float] = None
@@ -108,18 +109,20 @@ def set_delivery_priorities(
     else:
         mapping = {city: default_priority_id for city in cities_location}
 
-    global _CITY_PRIORITY, _PRIORITY_RULES, _DEFAULT_PRIORITY_ID
+    global _CITY_PRIORITY, _PRIORITY_RULES, _DEFAULT_PRIORITY_ID, _PRIORITY_REFERENCE_CITY
     _CITY_PRIORITY = mapping
     _PRIORITY_RULES = priority_rules
     _DEFAULT_PRIORITY_ID = default_priority_id
+    _PRIORITY_REFERENCE_CITY = cities_location[0] if cities_location else None
 
 
 def clear_delivery_priorities() -> None:
     """Disable delivery priorities."""
-    global _CITY_PRIORITY, _PRIORITY_RULES, _DEFAULT_PRIORITY_ID
+    global _CITY_PRIORITY, _PRIORITY_RULES, _DEFAULT_PRIORITY_ID, _PRIORITY_REFERENCE_CITY
     _CITY_PRIORITY = None
     _PRIORITY_RULES = None
     _DEFAULT_PRIORITY_ID = None
+    _PRIORITY_REFERENCE_CITY = None
 
 
 def set_vehicle_params(
@@ -281,11 +284,33 @@ def _cost_between(point1: Tuple[float, float], point2: Tuple[float, float]) -> f
     return calculate_distance(point1, point2)
 
 
-def _priority_factor_for_city(city: Tuple[float, float]) -> float:
+def _priority_rule_for_city(city: Tuple[float, float]) -> Optional[dict]:
     if _CITY_PRIORITY is None or _PRIORITY_RULES is None or _DEFAULT_PRIORITY_ID is None:
-        return 1.0
+        return None
     priority_id = _CITY_PRIORITY.get(city, _DEFAULT_PRIORITY_ID)
-    rule = _PRIORITY_RULES.get(priority_id)
+    return _PRIORITY_RULES.get(priority_id)
+
+
+def _coerce_float(value, default: Optional[float] = None) -> Optional[float]:
+    try:
+        if value is None:
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _coerce_int(value, default: Optional[int] = None) -> Optional[int]:
+    try:
+        if value is None:
+            return default
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _priority_factor_for_city(city: Tuple[float, float]) -> float:
+    rule = _priority_rule_for_city(city)
     if not rule:
         return 1.0
     try:
@@ -299,21 +324,103 @@ def _priority_factor_for_city(city: Tuple[float, float]) -> float:
     return weight * penalty
 
 
-def _priority_penalty(path: List[Tuple[float, float]]) -> float:
+def _resolve_priority_route(path: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
+    if not path:
+        return []
+
+    reference_city = None
+    if _REFERENCE_CITY is not None and _REFERENCE_CITY in path:
+        reference_city = _REFERENCE_CITY
+    elif _PRIORITY_REFERENCE_CITY is not None and _PRIORITY_REFERENCE_CITY in path:
+        reference_city = _PRIORITY_REFERENCE_CITY
+
+    if reference_city is None:
+        return list(path)
+
+    rotated = _rotate_to_reference(path, reference_city)
+    return rotated if rotated is not None else list(path)
+
+
+def _priority_penalty_for_sequence(
+    route_cities: List[Tuple[float, float]],
+    start_city: Tuple[float, float],
+) -> float:
     if _CITY_PRIORITY is None or _PRIORITY_RULES is None or _DEFAULT_PRIORITY_ID is None:
         return 0.0
-    n = len(path)
-    if n == 0:
+    if not route_cities:
         return 0.0
+
+    delay_penalty_multiplier = 25.0
+    window_penalty_multiplier = 18.0
+    position_penalty_multiplier = 60.0
+
     penalty_total = 0.0
-    for i in range(n):
-        from_city = path[i]
-        to_city = path[(i + 1) % n]
-        distance = _cost_between(from_city, to_city)
-        factor = _priority_factor_for_city(to_city)
+    elapsed_cost = 0.0
+    current = start_city
+
+    for visit_index, city in enumerate(route_cities, start=1):
+        leg_cost = _cost_between(current, city)
+        elapsed_cost += leg_cost
+
+        factor = max(1.0, _priority_factor_for_city(city))
+        rule = _priority_rule_for_city(city) or {}
+
         if factor > 1.0:
-            penalty_total += distance * (factor - 1.0)
+            penalty_total += leg_cost * (factor - 1.0)
+
+        max_delay_min = _coerce_float(rule.get("max_delay_min"))
+        if max_delay_min is not None and elapsed_cost > max_delay_min:
+            penalty_total += (
+                (elapsed_cost - max_delay_min)
+                * factor
+                * _coerce_float(rule.get("delay_penalty_multiplier"), delay_penalty_multiplier)
+            )
+
+        latest_position = _coerce_int(rule.get("latest_position"))
+        if latest_position is not None and latest_position > 0 and visit_index > latest_position:
+            penalty_total += (
+                (visit_index - latest_position)
+                * factor
+                * _coerce_float(rule.get("position_penalty"), position_penalty_multiplier)
+            )
+
+        sequence_penalty = _coerce_float(rule.get("sequence_penalty"), 0.0) or 0.0
+        if sequence_penalty > 0:
+            penalty_total += (visit_index - 1) * sequence_penalty
+
+        window_start = _coerce_float(rule.get("time_window_start_min"))
+        window_end = _coerce_float(rule.get("time_window_end_min"))
+        if window_start is not None and elapsed_cost < window_start:
+            penalty_total += (
+                (window_start - elapsed_cost)
+                * factor
+                * _coerce_float(rule.get("window_penalty_multiplier"), window_penalty_multiplier)
+            )
+        if window_end is not None and elapsed_cost > window_end:
+            penalty_total += (
+                (elapsed_cost - window_end)
+                * factor
+                * _coerce_float(rule.get("window_penalty_multiplier"), window_penalty_multiplier)
+            )
+
+        temperature_penalty_per_km = _coerce_float(rule.get("temperature_penalty_per_km"), 0.0) or 0.0
+        if temperature_penalty_per_km > 0:
+            penalty_total += elapsed_cost * temperature_penalty_per_km
+
+        service_time_min = _coerce_float(rule.get("service_time_min"), 0.0) or 0.0
+        if service_time_min > 0:
+            elapsed_cost += service_time_min
+
+        current = city
+
     return penalty_total
+
+
+def _priority_penalty(path: List[Tuple[float, float]]) -> float:
+    rotated = _resolve_priority_route(path)
+    if len(rotated) <= 1:
+        return 0.0
+    return _priority_penalty_for_sequence(rotated[1:], rotated[0])
 
 
 def _rotate_to_reference(path: List[Tuple[float, float]], reference_city: Tuple[float, float]) -> Optional[List[Tuple[float, float]]]:
@@ -593,28 +700,7 @@ def _subroute_priority_penalty(
     depot: Tuple[float, float],
 ) -> float:
     """Priority penalty for a sub-route (depot -> cities -> depot)."""
-    if _CITY_PRIORITY is None or _PRIORITY_RULES is None or _DEFAULT_PRIORITY_ID is None:
-        return 0.0
-    if not route_cities:
-        return 0.0
-
-    penalty = 0.0
-
-    first = route_cities[0]
-    distance = _cost_between(depot, first)
-    factor = _priority_factor_for_city(first)
-    if factor > 1.0:
-        penalty += distance * (factor - 1.0)
-
-    for i in range(len(route_cities) - 1):
-        from_city = route_cities[i]
-        to_city = route_cities[i + 1]
-        distance = _cost_between(from_city, to_city)
-        factor = _priority_factor_for_city(to_city)
-        if factor > 1.0:
-            penalty += distance * (factor - 1.0)
-
-    return penalty
+    return _priority_penalty_for_sequence(route_cities, depot)
 
 
 def _calculate_vrp_fitness(path: List[Tuple[float, float]]) -> float:
