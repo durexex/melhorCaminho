@@ -1361,19 +1361,34 @@ if not st.session_state.run_ga:
                 fitness_placeholder.pyplot(_fit_fig, width="stretch")
                 plt.close(_fit_fig)
             if "ga_best_solution" in st.session_state:
-                _sol_fig = build_solution_figure(
-                    cities_locations,
-                    st.session_state["ga_best_solution"],
-                    candidate_path=None,
-                    node_radius=_node_radius,
-                    city_priority_ids=_city_priorities,
-                    priority_labels={pid: data["label"] for pid, data in _priority_rules.items()},
-                    priority_order=_priority_ids,
-                    reference_city=cities_locations[0] if cities_locations else None,
-                    width=_width,
-                    height=_height,
-                    x_offset=_plot_x_offset,
-                )
+                _saved_vrp_routes = st.session_state.get("ga_vrp_routes")
+                if _saved_vrp_routes:
+                    _sol_fig = build_solution_figure(
+                        cities_locations,
+                        routes=_saved_vrp_routes,
+                        node_radius=_node_radius,
+                        city_priority_ids=_city_priorities,
+                        priority_labels={pid: data["label"] for pid, data in _priority_rules.items()},
+                        priority_order=_priority_ids,
+                        reference_city=cities_locations[0] if cities_locations else None,
+                        width=_width,
+                        height=_height,
+                        x_offset=_plot_x_offset,
+                    )
+                else:
+                    _sol_fig = build_solution_figure(
+                        cities_locations,
+                        st.session_state["ga_best_solution"],
+                        candidate_path=None,
+                        node_radius=_node_radius,
+                        city_priority_ids=_city_priorities,
+                        priority_labels={pid: data["label"] for pid, data in _priority_rules.items()},
+                        priority_order=_priority_ids,
+                        reference_city=cities_locations[0] if cities_locations else None,
+                        width=_width,
+                        height=_height,
+                        x_offset=_plot_x_offset,
+                    )
                 map_placeholder.pyplot(_sol_fig, width="stretch")
                 plt.close(_sol_fig)
             progress.progress(100)
@@ -1585,6 +1600,7 @@ st.session_state["ga_status_text"] = (
 )
 st.session_state["ga_best_fitness_values"] = list(best_fitness_values)
 st.session_state["ga_best_solution"] = list(best_solution_report)
+st.session_state["ga_vrp_routes"] = [list(r) for r in _final_routes] if _vrp_active_report and best_solution_report else None
 
 st.session_state.run_ga = False
 _safe_rerun()
