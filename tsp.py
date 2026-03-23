@@ -650,26 +650,38 @@ hora_inicio = datetime.now()
 # arquivo texto definido em CITIES_LOCATION_FILE, na sequencia verifica se deve usar matriz de assimatria 
 # em ATSP_ENABLED e gera a matriz e também guarda num arquivo texto definido em  ASYMMETRIC_COSTS_FILE
 if _gerar_cidades:
-    cities_locations = [
-        (random.randint(_node_radius + _plot_x_offset, _width - _node_radius), random.randint(_node_radius, _height - _node_radius))
-        for _ in range(_number_of_cities)
-    ]
+    _cached = st.session_state.get("_cached_cities")
+    if _cached is not None and len(_cached) == _number_of_cities:
+        cities_locations = list(_cached)
+    else:
+        cities_locations = [
+            (random.randint(_node_radius + _plot_x_offset, _width - _node_radius), random.randint(_node_radius, _height - _node_radius))
+            for _ in range(_number_of_cities)
+        ]
+        st.session_state["_cached_cities"] = list(cities_locations)
+        st.session_state.pop("_cached_demands", None)
+        st.session_state.pop("_cached_asymmetric_costs", None)
 
     with open(_cities_location_file, "w", encoding="utf-8") as cities_file:
         for x, y in cities_locations:
             cities_file.write(f"{x},{y}\n")
 
     if _atsp_enabled:
-        asymmetric_costs = load_asymmetric_cost_matrix(
-            _asymmetric_costs_file,
-            expected_size=len(cities_locations),
-        )
-        if asymmetric_costs is None:
-            asymmetric_costs = build_asymmetric_cost_matrix(
-                cities_locations,
-                asymmetry_factor = _asymmetry_factor,
-                seed = _asymmetry_seed,
+        _cached_ac = st.session_state.get("_cached_asymmetric_costs")
+        if _cached_ac is not None and len(_cached_ac) == len(cities_locations):
+            asymmetric_costs = _cached_ac
+        else:
+            asymmetric_costs = load_asymmetric_cost_matrix(
+                _asymmetric_costs_file,
+                expected_size=len(cities_locations),
             )
+            if asymmetric_costs is None:
+                asymmetric_costs = build_asymmetric_cost_matrix(
+                    cities_locations,
+                    asymmetry_factor = _asymmetry_factor,
+                    seed = _asymmetry_seed,
+                )
+            st.session_state["_cached_asymmetric_costs"] = asymmetric_costs
         set_asymmetric_costs(cities_locations, asymmetric_costs)
 else:
     # aqui ele irá ler os 2 arquivos CITIES_LOCATION_FILE e ASYMMETRIC_COSTS_FILE.
@@ -719,9 +731,14 @@ else:
     clear_car_autonomy()
 
 if _gerar_cidades:
-    _city_demands = _generate_city_demands(
-        cities_locations, _city_priorities, _priority_rules, _config,
-    )
+    _cached_dem = st.session_state.get("_cached_demands")
+    if _cached_dem is not None and len(_cached_dem) == len(cities_locations):
+        _city_demands = _cached_dem
+    else:
+        _city_demands = _generate_city_demands(
+            cities_locations, _city_priorities, _priority_rules, _config,
+        )
+        st.session_state["_cached_demands"] = list(_city_demands)
     _save_demands_csv(_cities_demand_file, cities_locations, _city_priorities, _city_demands)
 else:
     _city_demands = _load_demands_csv(_cities_demand_file, len(cities_locations))
