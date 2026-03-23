@@ -61,7 +61,7 @@ class TestLLMServiceInit:
         LLMService(api_key="test-key")
         mock_chat.assert_called_once_with(
             api_key="test-key",
-            model="gpt-4",
+            model="gpt-4o-mini",
             temperature=0.3,
         )
 

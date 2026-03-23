@@ -26,7 +26,9 @@ class ReportData:
     best_solution: List[Tuple[float, float]]
     best_generation: int
     best_fitness: float
+    initial_mutation_probability: float
     mutation_probability: float
+    increase_mutation_probability_if_stagnation: bool
     random_population_percent: float
     initial_population_method: str
     output_path: Optional[str] = None
@@ -97,7 +99,10 @@ def generate_report() -> str:
         f"Melhor fitness: {_REPORT_DATA.best_fitness:.2f}",
         f"Melhor solucao: {_REPORT_DATA.best_solution}",
         f"Geracao da melhor solucao: {_REPORT_DATA.best_generation}",
+        f"Probabilidade de mutacao inicial: {_REPORT_DATA.initial_mutation_probability:.2f}",
         f"Probabilidade de mutacao: {_REPORT_DATA.mutation_probability:.2f}",
+        "Aumento de probabilidade por estagnacao: "
+        f"{'ativado' if _REPORT_DATA.increase_mutation_probability_if_stagnation else 'desativado'}",
         f"Percentual populacao random: {_REPORT_DATA.random_population_percent:.2f}",
         f"Populacao inicial: {_REPORT_DATA.initial_population_method}",
     ]
