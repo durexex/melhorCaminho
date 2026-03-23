@@ -183,6 +183,13 @@ def _friendly_llm_error_message(exc: Exception) -> str:
             "Limite de requisicoes excedido. "
             "Aguarde alguns minutos e tente novamente."
         )
+    if "model_not_found" in msg or "does not exist" in msg:
+        current_model = os.getenv("LLM_MODEL", "gpt-4o-mini")
+        return (
+            f"O modelo '{current_model}' nao esta disponivel para sua chave de API. "
+            "Altere a variavel LLM_MODEL no arquivo .env para um modelo acessivel "
+            "(ex: gpt-4o-mini, gpt-3.5-turbo)."
+        )
     if "connection" in cause_type or "connect" in msg:
         return (
             "Erro de conexao com a API da OpenAI. "
@@ -194,7 +201,7 @@ def _friendly_llm_error_message(exc: Exception) -> str:
 @st.cache_resource
 def _get_llm_service():
     api_key = os.getenv("OPENAI_API_KEY")
-    model = os.getenv("LLM_MODEL", "gpt-4")
+    model = os.getenv("LLM_MODEL", "gpt-4o-mini")
     if not api_key or api_key == "sk-your-api-key-here":
         return None
     return LLMService(api_key=api_key, model=model)

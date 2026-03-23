@@ -118,7 +118,7 @@ def _format_route_data(route_data: dict) -> dict:
 class LLMService:
     """Encapsula a comunicação com a API da OpenAI via LangChain."""
 
-    def __init__(self, api_key: str, model: str = "gpt-4"):
+    def __init__(self, api_key: str, model: str = "gpt-4o-mini"):
         self._llm = ChatOpenAI(
             api_key=api_key,
             model=model,
