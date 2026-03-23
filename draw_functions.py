@@ -91,6 +91,7 @@ def _draw_priority_cities(
     cities_locations: List[Tuple[int, int]],
     city_priority_ids: Optional[List[str]],
     priority_labels: Optional[Dict[str, str]],
+    priority_order: Optional[List[str]],
     node_radius: int,
 ):
     if not cities_locations:
@@ -99,13 +100,15 @@ def _draw_priority_cities(
     if not city_priority_ids:
         return {}
 
-    priority_order = []
+    color_priority_order = list(priority_order or [])
     for priority_id in city_priority_ids:
-        if priority_id and priority_id not in priority_order:
-            priority_order.append(priority_id)
+        if priority_id and priority_id not in color_priority_order:
+            color_priority_order.append(priority_id)
 
-    color_map = _priority_color_map(priority_order)
-    grouped: Dict[str, List[Tuple[int, int]]] = {priority_id: [] for priority_id in priority_order}
+    color_map = _priority_color_map(color_priority_order)
+    grouped: Dict[str, List[Tuple[int, int]]] = {
+        priority_id: [] for priority_id in color_priority_order
+    }
 
     for index, city in enumerate(cities_locations):
         priority_id = city_priority_ids[index] if index < len(city_priority_ids) else None
@@ -213,6 +216,7 @@ def build_solution_figure(
     city_color: Tuple[int, int, int] = (255, 0, 0),
     city_priority_ids: Optional[List[str]] = None,
     priority_labels: Optional[Dict[str, str]] = None,
+    priority_order: Optional[List[str]] = None,
     best_color: Tuple[int, int, int] = (0, 0, 255),
     candidate_color: Tuple[int, int, int] = (128, 128, 128),
     reference_city: Optional[Tuple[int, int]] = None,
@@ -234,6 +238,7 @@ def build_solution_figure(
         cities_locations,
         city_priority_ids,
         priority_labels,
+        priority_order,
         node_radius,
     )
     if not priority_legend_items:
