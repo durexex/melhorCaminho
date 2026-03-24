@@ -55,7 +55,7 @@ Ou crie manualmente o arquivo `.env` na raiz do projeto. Veja a secao [Parametro
 ### Aplicacao principal (Streamlit)
 
 ```bash
-o instalastreamlit run tsp.py
+streamlit run tsp.py
 ```
 
 A interface sera aberta no navegador. Clique em **Play** na sidebar para iniciar o algoritmo genetico.
